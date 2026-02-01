@@ -6,6 +6,7 @@ requires-python = ">=3.9"
 dependencies = [
     "torch>=2.0.0",
     "numpy>=1.24.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -19,7 +20,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["games*", "cfr*", "core*"]
+include = ["games*", "cfr*", "core*", "config*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
