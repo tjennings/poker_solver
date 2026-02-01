@@ -136,14 +136,16 @@ class InteractiveSession:
         sb_committed = 0.5
         bb_committed = 1.0
 
-        current_player = 0  # 0 = SB, 1 = BB
+        for i, action in enumerate(self.history):
+            current_player = i % 2  # 0 = SB, 1 = BB
 
-        for action in self.history:
+            # Get the bet this player needs to match (look at prior history)
+            current_bet = self._get_bet_at_index(i)
+
             if current_player == 0:
                 # SB acting
                 if action == "c":
                     # SB calls/checks - match current bet
-                    current_bet = self._get_current_bet_at(current_player)
                     amount_to_add = current_bet - sb_committed
                     pot += amount_to_add
                     sb_committed = current_bet
@@ -163,7 +165,6 @@ class InteractiveSession:
                 # BB acting
                 if action == "c":
                     # BB calls/checks - match current bet
-                    current_bet = self._get_current_bet_at(current_player)
                     amount_to_add = current_bet - bb_committed
                     pot += amount_to_add
                     bb_committed = current_bet
@@ -180,31 +181,28 @@ class InteractiveSession:
                     bb_committed = raise_to
                 # fold adds nothing
 
-            current_player = 1 - current_player
-
         return pot
 
-    def _get_current_bet_at(self, acting_player: int) -> float:
-        """Get the bet amount the acting player needs to match.
+    def _get_bet_at_index(self, action_idx: int) -> float:
+        """Get the bet amount at a specific action index.
 
-        Looks at history up to but not including the current action point.
+        Scans backward from the given action index to find the most recent
+        raise or all-in that set the bet amount.
+
+        Args:
+            action_idx: Index into history of the action being considered.
+
+        Returns:
+            The bet amount in BB that was active at action_idx.
+            Returns 1.0 (BB) if no prior raises exist.
         """
-        # Count how many actions this player has taken
-        action_idx = 0
-        for i, action in enumerate(self.history):
-            if i % 2 == acting_player:
-                # This is this player's action - look at previous history
-                for prev_action in reversed(self.history[:i]):
-                    if prev_action.startswith("r"):
-                        return float(prev_action[1:])
-                    elif prev_action == "a":
-                        return self.stack
-                # No previous raise - bet is 1BB (the BB)
-                return 1.0
-            action_idx += 1
-
-        # No actions yet for this player - return initial bet (BB = 1)
-        return 1.0
+        for i in range(action_idx - 1, -1, -1):
+            action = self.history[i]
+            if action.startswith("r"):
+                return float(action[1:])
+            elif action == "a":
+                return self.stack
+        return 1.0  # Default is BB = 1
 
     def get_legal_actions(self) -> List[str]:
         """Get legal actions at the current state.
@@ -241,7 +239,14 @@ class InteractiveSession:
         return actions
 
     def _get_current_bet(self) -> float:
-        """Get the current bet amount that must be matched."""
+        """Get the current bet amount that must be matched.
+
+        Scans the action history in reverse to find the most recent raise
+        or all-in action. If no raises have occurred, returns 1.0 (the BB).
+
+        Returns:
+            The current bet size in big blinds that the acting player must match.
+        """
         if not self.history:
             return 1.0  # BB is 1
 
@@ -256,7 +261,15 @@ class InteractiveSession:
         return 1.0
 
     def _get_player_committed(self) -> float:
-        """Get amount the current player has committed to the pot."""
+        """Get amount the current player has committed to the pot.
+
+        Calculates the total amount the current player (determined by history
+        length) has put into the pot, including their initial blind and any
+        calls, raises, or all-in actions.
+
+        Returns:
+            The total amount committed by the current player in big blinds.
+        """
         current_player = len(self.history) % 2
         # Initial blinds
         committed = 0.5 if current_player == 0 else 1.0
@@ -276,7 +289,18 @@ class InteractiveSession:
         return committed
 
     def _get_bet_before_action(self, action_idx: int) -> float:
-        """Get the bet amount before a specific action index."""
+        """Get the bet amount before a specific action index.
+
+        Scans backward from the given action index to find the most recent
+        raise or all-in that set the bet amount the player needed to match.
+
+        Args:
+            action_idx: Index into history of the action being considered.
+
+        Returns:
+            The bet amount in BB that was active before action_idx.
+            Returns 1.0 (BB) if no prior raises exist.
+        """
         for i in range(action_idx - 1, -1, -1):
             action = self.history[i]
             if action.startswith("r"):

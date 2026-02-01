@@ -465,3 +465,498 @@ class TestInteractiveSessionRender:
         result = session.render()
         # Matrix should contain hand names
         assert "AA" in result
+
+
+# Edge case tests for comprehensive coverage
+
+
+class TestAllInScenarios:
+    """Tests for all-in action scenarios."""
+
+    def test_pot_after_sb_all_in(self, config, empty_strategy):
+        """Pot should be correct after SB goes all-in."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("a")  # SB all-in for 100
+        # SB put in 100 (was 0.5, adds 99.5), pot = 1.5 + 99.5 = 101
+        assert session.get_pot() == 101.0
+
+    def test_pot_after_sb_all_in_bb_call(self, config, empty_strategy):
+        """Pot should be correct when BB calls SB's all-in."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("a")  # SB all-in for 100
+        session.apply_action("c")  # BB calls
+        # Both players have 100 in, pot = 200
+        assert session.get_pot() == 200.0
+
+    def test_terminal_after_sb_all_in_bb_call(self, config, empty_strategy):
+        """Game should be terminal after BB calls SB all-in."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("a")
+        session.apply_action("c")
+        assert session.is_terminal() is True
+
+    def test_terminal_after_sb_all_in_bb_fold(self, config, empty_strategy):
+        """Game should be terminal after BB folds to SB all-in."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("a")
+        session.apply_action("f")
+        assert session.is_terminal() is True
+
+    def test_legal_actions_facing_all_in(self, config, empty_strategy):
+        """BB facing all-in should only have fold and call."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("a")
+        actions = session.get_legal_actions()
+        assert "f" in actions
+        assert "c" in actions
+        # No raises allowed when facing all-in
+        assert "a" not in actions
+        assert not any(a.startswith("r") for a in actions)
+
+    def test_pot_after_raise_then_all_in(self, config, empty_strategy):
+        """Pot should be correct after raise followed by all-in."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r8")  # SB raises to 8, pot = 1.5 + 7.5 = 9
+        session.apply_action("a")  # BB all-in for 100, pot = 9 + 99 = 108
+        assert session.get_pot() == 108.0
+
+    def test_not_terminal_after_raise_all_in(self, config, empty_strategy):
+        """Game not terminal after raise then all-in (SB still needs to act)."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r8")
+        session.apply_action("a")
+        assert session.is_terminal() is False
+
+    def test_terminal_after_raise_all_in_call(self, config, empty_strategy):
+        """Game should be terminal after SB calls BB's all-in."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r8")
+        session.apply_action("a")
+        session.apply_action("c")
+        assert session.is_terminal() is True
+
+    def test_pot_after_raise_all_in_call(self, config, empty_strategy):
+        """Pot should be 200 (both all-in) after raise, all-in, call."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r8")
+        session.apply_action("a")
+        session.apply_action("c")
+        # SB raised to 8 (pot=9), BB all-in (pot=108), SB calls (puts in 92 more)
+        # pot = 108 + 92 = 200
+        assert session.get_pot() == 200.0
+
+
+class TestLimpCheckScenarios:
+    """Tests for limp-check (c, c) action pattern."""
+
+    def test_pot_after_sb_limp(self, config, empty_strategy):
+        """Pot should be 2.0 after SB limps (calls BB)."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")  # SB limps (0.5 -> 1.0, adds 0.5)
+        assert session.get_pot() == 2.0
+
+    def test_not_terminal_after_limp(self, config, empty_strategy):
+        """Game should NOT be terminal after just a limp."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")
+        assert session.is_terminal() is False
+
+    def test_current_player_after_limp(self, config, empty_strategy):
+        """BB should be the current player after SB limps."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")
+        assert session.get_current_player() == "BB"
+
+    def test_pot_after_limp_check(self, config, empty_strategy):
+        """Pot should be 2.0 after limp-check (no more money added)."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")  # SB limps
+        session.apply_action("c")  # BB checks
+        assert session.get_pot() == 2.0
+
+    def test_terminal_after_limp_check(self, config, empty_strategy):
+        """Game should be terminal after limp-check."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")
+        session.apply_action("c")
+        assert session.is_terminal() is True
+
+    def test_pot_after_limp_raise(self, config, empty_strategy):
+        """Pot should reflect BB raise after SB limp."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")  # SB limps, pot = 2.0
+        session.apply_action("r8")  # BB raises to 8, pot = 2 + 7 = 9
+        assert session.get_pot() == 9.0
+
+    def test_not_terminal_after_limp_raise(self, config, empty_strategy):
+        """Game should NOT be terminal after limp then raise."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")
+        session.apply_action("r8")
+        assert session.is_terminal() is False
+
+    def test_terminal_after_limp_raise_call(self, config, empty_strategy):
+        """Game should be terminal after limp, raise, call."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")  # SB limps
+        session.apply_action("r8")  # BB raises
+        session.apply_action("c")  # SB calls
+        assert session.is_terminal() is True
+
+    def test_pot_after_limp_raise_call(self, config, empty_strategy):
+        """Pot should be 16 after limp, raise to 8, call."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")  # SB limps, pot = 2
+        session.apply_action("r8")  # BB raises to 8, pot = 2 + 7 = 9
+        session.apply_action("c")  # SB calls 8, pot = 9 + 7 = 16
+        assert session.get_pot() == 16.0
+
+
+class TestComplexRaiseSequences:
+    """Tests for complex raise-reraise-call sequences."""
+
+    def test_pot_after_raise_reraise(self, config, empty_strategy):
+        """Pot should be correct after raise and reraise."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")  # SB raises to 3, pot = 1.5 + 2.5 = 4
+        session.apply_action("r8")  # BB raises to 8, pot = 4 + 7 = 11
+        assert session.get_pot() == 11.0
+
+    def test_not_terminal_after_raise_reraise(self, config, empty_strategy):
+        """Game should NOT be terminal after raise-reraise."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")
+        session.apply_action("r8")
+        assert session.is_terminal() is False
+
+    def test_current_player_after_raise_reraise(self, config, empty_strategy):
+        """SB should be the current player after raise-reraise."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")
+        session.apply_action("r8")
+        assert session.get_current_player() == "SB"
+
+    def test_terminal_after_raise_reraise_call(self, config, empty_strategy):
+        """Game should be terminal after raise-reraise-call."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")
+        session.apply_action("r8")
+        session.apply_action("c")
+        assert session.is_terminal() is True
+
+    def test_pot_after_raise_reraise_call(self, config, empty_strategy):
+        """Pot should be correct after raise-reraise-call."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")  # SB raises to 3, pot = 4
+        session.apply_action("r8")  # BB raises to 8, pot = 11
+        session.apply_action("c")  # SB calls 8, pot = 11 + 5 = 16
+        assert session.get_pot() == 16.0
+
+    def test_pot_after_raise_reraise_reraise(self, config, empty_strategy):
+        """Pot should be correct after three raises."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")  # SB raises to 3, pot = 4
+        session.apply_action("r8")  # BB raises to 8, pot = 11
+        session.apply_action("r20")  # SB raises to 20, pot = 11 + 17 = 28
+        assert session.get_pot() == 28.0
+
+    def test_terminal_after_raise_reraise_reraise_call(self, config, empty_strategy):
+        """Game should be terminal after raise-reraise-reraise-call."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")
+        session.apply_action("r8")
+        session.apply_action("r20")
+        session.apply_action("c")
+        assert session.is_terminal() is True
+
+    def test_pot_after_raise_reraise_reraise_call(self, config, empty_strategy):
+        """Pot should be correct after raise-reraise-reraise-call."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")  # SB raises to 3, pot = 4
+        session.apply_action("r8")  # BB raises to 8, pot = 11
+        session.apply_action("r20")  # SB raises to 20, pot = 28
+        session.apply_action("c")  # BB calls 20, pot = 28 + 12 = 40
+        assert session.get_pot() == 40.0
+
+    def test_terminal_after_raise_reraise_fold(self, config, empty_strategy):
+        """Game should be terminal after raise-reraise-fold."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")
+        session.apply_action("r8")
+        session.apply_action("f")
+        assert session.is_terminal() is True
+
+    def test_legal_actions_after_raise(self, config, empty_strategy):
+        """BB should have fold, call, larger raises, all-in after SB raise."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")
+        actions = session.get_legal_actions()
+        assert "f" in actions
+        assert "c" in actions
+        # Larger raises only
+        assert "r2.5" not in actions  # Too small
+        assert "r8" in actions or "r8.0" in actions
+        assert "r20" in actions or "r20.0" in actions
+        assert "a" in actions
+
+
+class TestPotCalculationEdgeCases:
+    """Tests for pot calculation in various scenarios."""
+
+    def test_pot_starts_at_blinds(self, config, empty_strategy):
+        """Initial pot should be 1.5 (0.5 SB + 1.0 BB)."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        assert session.get_pot() == 1.5
+
+    def test_pot_after_fold(self, config, empty_strategy):
+        """Pot should not change on fold."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")  # pot = 4
+        session.apply_action("f")
+        assert session.get_pot() == 4.0
+
+    def test_pot_decimal_raise_sizes(self, config, empty_strategy):
+        """Pot should handle decimal raise sizes correctly."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r2.5")  # SB raises to 2.5, pot = 1.5 + 2 = 3.5
+        assert session.get_pot() == 3.5
+
+    def test_pot_after_multiple_calls(self, config, empty_strategy):
+        """Pot should be correct after limp-raise-call sequence."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")  # SB limps, pot = 2
+        session.apply_action("r8")  # BB raises to 8, pot = 9
+        session.apply_action("r20")  # SB reraises to 20, pot = 9 + 19 = 28
+        session.apply_action("c")  # BB calls 20, pot = 28 + 12 = 40
+        assert session.get_pot() == 40.0
+
+    def test_player_committed_at_start_sb(self, config, empty_strategy):
+        """SB should have 0.5 committed at start."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        assert session._get_player_committed() == 0.5
+
+    def test_player_committed_after_raise(self, config, empty_strategy):
+        """BB should have 1.0 committed after SB raises (BB hasn't acted yet)."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")
+        # Current player is BB, who has committed 1.0
+        assert session._get_player_committed() == 1.0
+
+    def test_player_committed_after_call(self, config, empty_strategy):
+        """After SB raises and BB calls, SB should have 3.0 committed."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")
+        session.apply_action("c")
+        # Current player is SB (though terminal), who committed 3.0
+        assert session._get_player_committed() == 3.0
+
+    def test_current_bet_at_start(self, config, empty_strategy):
+        """Current bet at start should be 1.0 (the BB)."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        assert session._get_current_bet() == 1.0
+
+    def test_current_bet_after_raise(self, config, empty_strategy):
+        """Current bet after raise should be the raise amount."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r8")
+        assert session._get_current_bet() == 8.0
+
+    def test_current_bet_after_all_in(self, config, empty_strategy):
+        """Current bet after all-in should be stack size."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("a")
+        assert session._get_current_bet() == 100.0
+
+
+class TestSmallStackScenarios:
+    """Tests with smaller stack sizes."""
+
+    @pytest.fixture
+    def small_stack_config(self):
+        """Create a config with small stack (10 BB)."""
+        return Config(
+            name="Small",
+            stack_depth=10.0,
+            raise_sizes=[2.5, 3.0, 5.0],
+        )
+
+    def test_legal_raises_limited_by_stack(self, small_stack_config, empty_strategy):
+        """Raise sizes should be limited by stack."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(small_stack_config, empty_strategy)
+        actions = session.get_legal_actions()
+        # All raises should be <= 10
+        raise_actions = [a for a in actions if a.startswith("r")]
+        for action in raise_actions:
+            size = float(action[1:])
+            assert size <= 10.0
+
+    def test_all_in_equals_stack(self, small_stack_config, empty_strategy):
+        """All-in should put stack size in pot."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(small_stack_config, empty_strategy)
+        session.apply_action("a")  # SB all-in for 10
+        # Pot = 1.5 + 9.5 = 11
+        assert session.get_pot() == 11.0
+
+    def test_small_stack_all_in_call(self, small_stack_config, empty_strategy):
+        """Both players all-in should result in pot = 2x stack."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(small_stack_config, empty_strategy)
+        session.apply_action("a")
+        session.apply_action("c")
+        # Both have 10 in, pot = 20
+        assert session.get_pot() == 20.0
+
+
+class TestTerminalStateValidation:
+    """Additional terminal state validation tests."""
+
+    def test_cannot_fold_when_not_facing_bet(self, config, empty_strategy):
+        """Fold should not be in legal actions when not facing a bet."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        # At start, SB faces BB's 1BB bet, but SB only has 0.5 committed
+        # So SB IS facing a bet (needs to put in 0.5 more to call)
+        # Actually, checking the logic: current_bet=1, player_committed=0.5
+        # So f should be available
+        actions = session.get_legal_actions()
+        assert "f" in actions
+
+    def test_cannot_fold_after_limp(self, config, empty_strategy):
+        """BB cannot fold after SB limps (not facing a bet)."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("c")  # SB limps
+        # BB has 1.0 committed, current_bet is 1.0, so no fold needed
+        actions = session.get_legal_actions()
+        assert "f" not in actions
+
+    def test_long_sequence_player_alternation(self, config, empty_strategy):
+        """Players should alternate correctly through long sequences."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        assert session.get_current_player() == "SB"
+        session.apply_action("r3")
+        assert session.get_current_player() == "BB"
+        session.apply_action("r8")
+        assert session.get_current_player() == "SB"
+        session.apply_action("r20")
+        assert session.get_current_player() == "BB"
+        session.apply_action("a")
+        assert session.get_current_player() == "SB"
+
+    def test_history_preserved_through_sequence(self, config, empty_strategy):
+        """History should be correctly preserved through actions."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")
+        session.apply_action("r8")
+        session.apply_action("r20")
+        assert session.history == ["r3", "r8", "r20"]
+
+    def test_go_back_restores_pot(self, config, empty_strategy):
+        """Going back should restore the correct pot."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        initial_pot = session.get_pot()
+        session.apply_action("r3")
+        pot_after_raise = session.get_pot()
+        session.go_back()
+        assert session.get_pot() == initial_pot
+        assert session.get_pot() != pot_after_raise
+
+    def test_go_back_restores_terminal_state(self, config, empty_strategy):
+        """Going back from terminal should make non-terminal."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, empty_strategy)
+        session.apply_action("r3")
+        session.apply_action("c")
+        assert session.is_terminal() is True
+        session.go_back()
+        assert session.is_terminal() is False
