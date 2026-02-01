@@ -30,8 +30,14 @@ cd poker_solver
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies
+# Install the package and dependencies
 pip install -e ".[dev]"
+```
+
+**Note:** The install command will download PyTorch (~200MB). If you encounter issues, you can install dependencies directly:
+
+```bash
+pip install torch numpy pytest
 ```
 
 ## Usage
