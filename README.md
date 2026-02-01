@@ -22,25 +22,29 @@ Currently supports Kuhn Poker, with an architecture designed for extension to la
 ### Setup
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone <repo-url>
 cd poker_solver
 
-# Create virtual environment
+# 2. Create and activate virtual environment
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install the package and dependencies
-pip install -e ".[dev]"
-```
-
-**Note:** The install command will download PyTorch (~200MB). If you encounter issues, you can install dependencies directly:
-
-```bash
+# 3. Install dependencies (required before running)
 pip install torch numpy pytest
 ```
 
+Alternatively, install as a package:
+
+```bash
+pip install -e ".[dev]"
+```
+
+**Note:** PyTorch is ~200MB and may take a few minutes to download.
+
 ## Usage
+
+**Important:** Make sure you've installed dependencies first (see Setup above).
 
 ### Command Line
 
