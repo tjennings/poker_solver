@@ -150,6 +150,9 @@ class BatchedCFR:
                 if self.compiled.action_mask[node_idx, a]:
                     self.strategy_sum[info_set, a] += my_reach * strategy[info_set, a]
 
+        # CFR+ modification: floor regrets at zero
+        self.regret_sum = torch.clamp(self.regret_sum, min=0)
+
         self.iterations += self.batch_size
 
     def get_average_strategy(self) -> Dict[str, Dict[str, float]]:
