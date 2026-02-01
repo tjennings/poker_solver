@@ -16,7 +16,7 @@ Currently supports Kuhn Poker, with an architecture designed for extension to la
 
 ### Requirements
 
-- Python 3.10+
+- Python 3.9+
 - PyTorch 2.0+
 
 ### Setup
