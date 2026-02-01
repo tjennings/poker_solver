@@ -26,8 +26,8 @@ Currently supports Kuhn Poker, with an architecture designed for extension to la
 git clone <repo-url>
 cd poker_solver
 
-# 2. Create and activate virtual environment
-python -m venv venv
+# 2. Create and activate virtual environment (use python3.14 if available)
+python3.14 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # 3. Install dependencies (required before running)
