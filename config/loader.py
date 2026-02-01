@@ -44,14 +44,21 @@ def load_config(path: str) -> Config:
 
     Raises:
         FileNotFoundError: If the config file doesn't exist.
-        ValueError: If required fields are missing.
+        ValueError: If required fields are missing or invalid.
     """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
 
     with open(path, 'r') as f:
-        data = yaml.safe_load(f)
+        try:
+            data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML syntax: {e}")
+
+    # Validate that data is a dict
+    if not isinstance(data, dict):
+        raise ValueError("Config file must contain a YAML mapping (dict), not a scalar or list")
 
     # Validate required fields
     if 'stack_depth' not in data:
@@ -59,13 +66,37 @@ def load_config(path: str) -> Config:
     if 'raise_sizes' not in data:
         raise ValueError("Missing required field: raise_sizes")
 
+    # Validate stack_depth type and value
+    try:
+        stack_depth = float(data['stack_depth'])
+    except (TypeError, ValueError):
+        raise ValueError(f"stack_depth must be a number, got: {type(data['stack_depth']).__name__}")
+
+    if stack_depth <= 0:
+        raise ValueError(f"stack_depth must be positive, got: {stack_depth}")
+
+    # Validate raise_sizes is a list
+    if not isinstance(data['raise_sizes'], list):
+        raise ValueError(f"raise_sizes must be a list, got: {type(data['raise_sizes']).__name__}")
+
+    # Validate and convert raise_sizes values
+    raise_sizes = []
+    for i, s in enumerate(data['raise_sizes']):
+        try:
+            size = float(s)
+        except (TypeError, ValueError):
+            raise ValueError(f"raise_sizes[{i}] must be a number, got: {type(s).__name__}")
+        if size <= 0:
+            raise ValueError(f"raise_sizes[{i}] must be positive, got: {size}")
+        raise_sizes.append(size)
+
     # Default name to "Custom" if not provided
     name = data.get('name', 'Custom')
 
     return Config(
         name=name,
-        stack_depth=float(data['stack_depth']),
-        raise_sizes=[float(s) for s in data['raise_sizes']]
+        stack_depth=stack_depth,
+        raise_sizes=raise_sizes,
     )
 
 
