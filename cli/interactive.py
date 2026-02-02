@@ -417,8 +417,8 @@ class InteractiveSession:
         # Get strategy for current state (filtered by history)
         current_strategy = self.get_strategy_for_current_state()
 
-        # Render matrix
-        matrix = render_matrix(current_strategy, header)
+        # Render matrix with raise sizes from config
+        matrix = render_matrix(current_strategy, header, self.config.raise_sizes)
 
         return matrix
 

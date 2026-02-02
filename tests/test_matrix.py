@@ -6,6 +6,7 @@ from typing import Dict
 from cli.matrix import (
     ActionDistribution,
     get_color_for_action,
+    get_raise_color,
     render_matrix,
     render_header,
     render_legend,
@@ -14,12 +15,14 @@ from cli.matrix import (
     ANSI_BRIGHT_BLUE,
     ANSI_DIM_GREEN,
     ANSI_BRIGHT_GREEN,
-    ANSI_LIGHT_RED,
-    ANSI_MEDIUM_RED,
-    ANSI_DARK_RED,
     ANSI_DARKEST_RED,
+    RED_GRADIENT,
 )
 from core.hands import get_matrix_layout
+
+
+# Test fixtures
+TEST_RAISE_SIZES = [2.5, 3.0, 8.0, 20.0]
 
 
 class TestActionDistribution:
@@ -118,15 +121,16 @@ class TestColorMapping:
         color = get_color_for_action("call", 0.9)
         assert "32" in color or "92" in color
 
-    def test_raise_small_is_light_red(self):
-        """Small raise should use light red."""
-        color = get_color_for_action("raise", 0.9, raise_size=5.0, max_raise=100.0)
-        assert "203" in color  # Light red 256-color code
+    def test_raise_smallest_is_lightest_red(self):
+        """Smallest raise in config should use lightest red."""
+        color = get_color_for_action("raise", 0.9, raise_size=2.5, raise_sizes=TEST_RAISE_SIZES)
+        assert f"{RED_GRADIENT[0]}" in color  # Lightest red
 
-    def test_raise_large_is_dark_red(self):
-        """Large raise should use dark red."""
-        color = get_color_for_action("raise", 0.9, raise_size=75.0, max_raise=100.0)
-        assert "160" in color  # Dark red 256-color code
+    def test_raise_largest_is_darkest_raise_red(self):
+        """Largest raise in config should use darkest raise red."""
+        color = get_color_for_action("raise", 0.9, raise_size=20.0, raise_sizes=TEST_RAISE_SIZES)
+        # Last color in gradient (excluding all-in)
+        assert f"{RED_GRADIENT[-1]}" in color
 
     def test_all_in_is_darkest_red(self):
         """All-in action should use darkest red."""
@@ -154,6 +158,38 @@ class TestColorMapping:
         assert "32" in color  # Dim green
 
 
+class TestGetRaiseColor:
+    """Tests for get_raise_color function."""
+
+    def test_first_raise_gets_lightest_color(self):
+        """First raise in list should get lightest red."""
+        color = get_raise_color(2.5, TEST_RAISE_SIZES)
+        assert f"{RED_GRADIENT[0]}" in color
+
+    def test_last_raise_gets_darkest_color(self):
+        """Last raise in list should get darkest raise red."""
+        color = get_raise_color(20.0, TEST_RAISE_SIZES)
+        assert f"{RED_GRADIENT[-1]}" in color
+
+    def test_middle_raise_gets_middle_color(self):
+        """Middle raises should get intermediate colors."""
+        # With 4 raises, index 1 and 2 should get middle colors
+        color = get_raise_color(8.0, TEST_RAISE_SIZES)
+        # Should be somewhere in the middle of gradient
+        assert "38;5;" in color
+
+    def test_single_raise_gets_middle_color(self):
+        """Single raise size should get middle color."""
+        color = get_raise_color(5.0, [5.0])
+        middle_idx = len(RED_GRADIENT) // 2
+        assert f"{RED_GRADIENT[middle_idx]}" in color
+
+    def test_empty_raise_list_returns_default(self):
+        """Empty raise list should return default color."""
+        color = get_raise_color(5.0, [])
+        assert f"{RED_GRADIENT[0]}" in color
+
+
 class TestRenderMatrix:
     """Tests for render_matrix function."""
 
@@ -167,36 +203,39 @@ class TestRenderMatrix:
     def test_render_contains_hands(self):
         """Rendered matrix should contain hand names."""
         strategy = _create_dummy_strategy()
-        output = render_matrix(strategy, "Test")
+        output = render_matrix(strategy, "Test", TEST_RAISE_SIZES)
         assert "AA" in output
         assert "AKo" in output
 
     def test_render_contains_header(self):
         """Rendered matrix should include the header."""
         strategy = _create_dummy_strategy()
-        output = render_matrix(strategy, "Test Header")
+        output = render_matrix(strategy, "Test Header", TEST_RAISE_SIZES)
         assert "Test Header" in output
 
     def test_render_contains_ansi_codes(self):
         """Rendered matrix should contain ANSI color codes."""
         strategy = _create_dummy_strategy()
-        output = render_matrix(strategy, "Test")
+        output = render_matrix(strategy, "Test", TEST_RAISE_SIZES)
         assert "\033[" in output
         assert ANSI_RESET in output
 
     def test_render_contains_legend(self):
-        """Rendered matrix should contain the legend."""
+        """Rendered matrix should contain the legend with raise sizes."""
         strategy = _create_dummy_strategy()
-        output = render_matrix(strategy, "Test")
+        output = render_matrix(strategy, "Test", TEST_RAISE_SIZES)
         assert "Legend" in output
         assert "Fold" in output
         assert "Call" in output
         assert "All-in" in output
+        # Should contain actual raise sizes, not small/medium/large
+        assert "Raise 2.5" in output
+        assert "Raise 20" in output
 
     def test_render_all_169_hands(self):
         """Rendered matrix should contain all 169 hands."""
         strategy = _create_dummy_strategy()
-        output = render_matrix(strategy, "Test")
+        output = render_matrix(strategy, "Test", TEST_RAISE_SIZES)
         layout = get_matrix_layout()
         for row in layout:
             for hand in row:
@@ -205,7 +244,7 @@ class TestRenderMatrix:
     def test_cells_are_4_char_width(self):
         """Each cell should be left-aligned with 4-char width."""
         strategy = _create_dummy_strategy()
-        output = render_matrix(strategy, "Test")
+        output = render_matrix(strategy, "Test", TEST_RAISE_SIZES)
         # Remove ANSI codes for checking spacing
         clean = _strip_ansi(output)
         # Check that AA appears with proper spacing
@@ -219,19 +258,44 @@ class TestRenderLegend:
     """Tests for render_legend function."""
 
     def test_legend_contains_all_actions(self):
-        """Legend should list all action types."""
+        """Legend should list all action types with raise sizes."""
+        legend_lines = render_legend(TEST_RAISE_SIZES)
+        legend_text = "\n".join(legend_lines)
+        assert "Fold" in legend_text
+        assert "Call" in legend_text
+        assert "All-in" in legend_text
+        # Should contain actual raise sizes
+        assert "Raise 2.5" in legend_text
+        assert "Raise 3" in legend_text
+        assert "Raise 8" in legend_text
+        assert "Raise 20" in legend_text
+
+    def test_legend_contains_colors(self):
+        """Legend should contain color codes."""
+        legend_lines = render_legend(TEST_RAISE_SIZES)
+        legend_text = "\n".join(legend_lines)
+        assert "\033[" in legend_text
+
+    def test_legend_without_raise_sizes(self):
+        """Legend without raise sizes should still show fold/call/all-in."""
         legend_lines = render_legend()
         legend_text = "\n".join(legend_lines)
         assert "Fold" in legend_text
         assert "Call" in legend_text
-        assert "Raise" in legend_text
         assert "All-in" in legend_text
 
-    def test_legend_contains_colors(self):
-        """Legend should contain color codes."""
-        legend_lines = render_legend()
+    def test_legend_raise_sizes_sorted(self):
+        """Legend should show raise sizes in sorted order."""
+        # Pass sizes out of order
+        legend_lines = render_legend([20.0, 3.0, 8.0, 2.5])
         legend_text = "\n".join(legend_lines)
-        assert "\033[" in legend_text
+        # Find positions of each raise in the text
+        pos_2_5 = legend_text.find("Raise 2.5")
+        pos_3 = legend_text.find("Raise 3")
+        pos_8 = legend_text.find("Raise 8")
+        pos_20 = legend_text.find("Raise 20")
+        # Should be in ascending order
+        assert pos_2_5 < pos_3 < pos_8 < pos_20
 
 
 class TestRenderHeader:
@@ -316,13 +380,17 @@ class TestANSIConstants:
         """ANSI_BRIGHT_GREEN should be code 92."""
         assert "92" in ANSI_BRIGHT_GREEN
 
-    def test_ansi_light_red(self):
-        """ANSI_LIGHT_RED should use 256-color mode."""
-        assert "38;5;203" in ANSI_LIGHT_RED
-
     def test_ansi_darkest_red(self):
         """ANSI_DARKEST_RED should use 256-color mode."""
         assert "38;5;124" in ANSI_DARKEST_RED
+
+    def test_red_gradient_has_colors(self):
+        """RED_GRADIENT should contain color codes."""
+        assert len(RED_GRADIENT) >= 3
+        # First should be lightest (203)
+        assert RED_GRADIENT[0] == 203
+        # Last should be darkest (124 for all-in)
+        assert RED_GRADIENT[-1] == 124
 
 
 # Helper functions

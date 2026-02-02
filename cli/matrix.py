@@ -22,14 +22,47 @@ ANSI_BRIGHT_BLUE = "\033[94m"
 ANSI_DIM_GREEN = "\033[32m"
 ANSI_BRIGHT_GREEN = "\033[92m"
 
-# Red shades for raises (using 256-color mode for better gradients)
-ANSI_LIGHT_RED = "\033[38;5;203m"      # Light red - small raise
-ANSI_MEDIUM_RED = "\033[38;5;196m"     # Medium red - medium raise
-ANSI_DARK_RED = "\033[38;5;160m"       # Dark red - large raise
-ANSI_DARKEST_RED = "\033[38;5;124m"    # Darkest red - all-in
+# Red color codes for raises (256-color mode)
+# Gradient from light to dark: 203 -> 196 -> 160 -> 124
+RED_GRADIENT = [203, 196, 167, 160, 124]  # Light to dark red codes
+ANSI_DARKEST_RED = "\033[38;5;124m"  # Reserved for all-in
 
 # Brightness threshold
 BRIGHT_THRESHOLD = 0.85
+
+
+def get_raise_color(raise_size: float, raise_sizes: List[float]) -> str:
+    """Get the ANSI color for a raise size based on its position in the config.
+
+    Args:
+        raise_size: The raise size to get color for
+        raise_sizes: List of configured raise sizes (sorted ascending)
+
+    Returns:
+        ANSI escape code for the appropriate red shade
+    """
+    if not raise_sizes:
+        return f"\033[38;5;{RED_GRADIENT[0]}m"
+
+    # Find the index of this raise size in the sorted list
+    sorted_sizes = sorted(raise_sizes)
+    try:
+        idx = sorted_sizes.index(raise_size)
+    except ValueError:
+        # If exact match not found, find closest
+        idx = min(range(len(sorted_sizes)), key=lambda i: abs(sorted_sizes[i] - raise_size))
+
+    # Map index to color gradient
+    num_sizes = len(sorted_sizes)
+    if num_sizes == 1:
+        color_idx = len(RED_GRADIENT) // 2
+    else:
+        # Interpolate position in gradient
+        ratio = idx / (num_sizes - 1)
+        color_idx = int(ratio * (len(RED_GRADIENT) - 1))
+
+    color_code = RED_GRADIENT[min(color_idx, len(RED_GRADIENT) - 1)]
+    return f"\033[38;5;{color_code}m"
 
 
 @dataclass
@@ -87,7 +120,7 @@ def get_color_for_action(
     action: str,
     frequency: float,
     raise_size: Optional[float] = None,
-    max_raise: float = 100.0,
+    raise_sizes: Optional[List[float]] = None,
 ) -> str:
     """
     Get the ANSI color code for a given action and frequency.
@@ -96,7 +129,7 @@ def get_color_for_action(
         action: The action type ('fold', 'call', 'raise', 'all_in')
         frequency: The frequency of the action (0.0 - 1.0)
         raise_size: For raises, the size of the raise
-        max_raise: Maximum raise size for scaling (default 100 BB)
+        raise_sizes: List of configured raise sizes for color mapping
 
     Returns:
         ANSI escape code string for the appropriate color
@@ -110,16 +143,10 @@ def get_color_for_action(
     elif action == "call":
         return ANSI_BRIGHT_GREEN if is_bright else ANSI_DIM_GREEN
     elif action == "raise":
-        # Gradient from light to dark red based on raise size
-        if raise_size is not None:
-            ratio = min(raise_size / max_raise, 1.0)
-            if ratio < 0.25:
-                return ANSI_LIGHT_RED
-            elif ratio < 0.5:
-                return ANSI_MEDIUM_RED
-            else:
-                return ANSI_DARK_RED
-        return ANSI_LIGHT_RED
+        if raise_size is not None and raise_sizes:
+            return get_raise_color(raise_size, raise_sizes)
+        # Fallback to middle red if no size info
+        return f"\033[38;5;{RED_GRADIENT[len(RED_GRADIENT) // 2]}m"
     elif action == "all_in":
         return ANSI_DARKEST_RED
     else:
@@ -127,29 +154,44 @@ def get_color_for_action(
         return ANSI_RESET
 
 
-def render_legend() -> List[str]:
+def render_legend(raise_sizes: Optional[List[float]] = None) -> List[str]:
     """
     Render the color legend.
+
+    Args:
+        raise_sizes: List of configured raise sizes to show in legend
 
     Returns:
         List of strings for each legend line
     """
-    return [
+    lines = [
         "",
         "  Legend:",
         f"  {ANSI_BRIGHT_BLUE}■{ANSI_RESET} Fold",
         f"  {ANSI_BRIGHT_GREEN}■{ANSI_RESET} Call",
-        f"  {ANSI_LIGHT_RED}■{ANSI_RESET} Raise (small)",
-        f"  {ANSI_MEDIUM_RED}■{ANSI_RESET} Raise (medium)",
-        f"  {ANSI_DARK_RED}■{ANSI_RESET} Raise (large)",
-        f"  {ANSI_DARKEST_RED}■{ANSI_RESET} All-in",
     ]
+
+    # Add raise sizes with their colors
+    if raise_sizes:
+        sorted_sizes = sorted(raise_sizes)
+        for size in sorted_sizes:
+            color = get_raise_color(size, sorted_sizes)
+            # Format size: show as integer if whole number
+            if size == int(size):
+                size_str = f"{int(size)}"
+            else:
+                size_str = f"{size:g}"
+            lines.append(f"  {color}■{ANSI_RESET} Raise {size_str}")
+
+    lines.append(f"  {ANSI_DARKEST_RED}■{ANSI_RESET} All-in")
+
+    return lines
 
 
 def render_matrix(
     strategy: Dict[str, ActionDistribution],
     header: str,
-    max_raise: float = 100.0,
+    raise_sizes: Optional[List[float]] = None,
 ) -> str:
     """
     Render a 13x13 strategy matrix with color-coded cells and legend.
@@ -157,14 +199,14 @@ def render_matrix(
     Args:
         strategy: Dictionary mapping hand names to ActionDistribution
         header: Header text to display above the matrix
-        max_raise: Maximum raise size for color scaling
+        raise_sizes: List of configured raise sizes for color mapping and legend
 
     Returns:
         String containing the formatted matrix with ANSI color codes
     """
     layout = get_matrix_layout()
     matrix_lines: List[str] = []
-    legend_lines = render_legend()
+    legend_lines = render_legend(raise_sizes)
 
     # Add header
     matrix_lines.append(header)
@@ -178,7 +220,7 @@ def render_matrix(
             dist = strategy.get(hand)
             if dist is not None:
                 action, freq, raise_size = dist.dominant_action()
-                color = get_color_for_action(action, freq, raise_size, max_raise)
+                color = get_color_for_action(action, freq, raise_size, raise_sizes)
             else:
                 # Default to no color if no strategy for this hand
                 color = ANSI_RESET
