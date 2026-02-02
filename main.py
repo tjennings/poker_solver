@@ -282,99 +282,59 @@ def run_hunl(args):
             print("Training complete. Use --no-interactive to skip interactive mode.")
 
 
-def add_kuhn_args(parser):
-    """Add kuhn-specific arguments to a parser."""
+def add_common_args(parser, iterations_default=10000, batch_default=1):
+    """Add common arguments shared by all game solvers."""
     parser.add_argument(
-        "--iterations", "-i",
-        type=int,
-        default=10000,
-        help="Number of CFR iterations (default: 10000)"
+        "--iterations", "-i", type=int, default=iterations_default,
+        help=f"Number of CFR iterations (default: {iterations_default})"
     )
     parser.add_argument(
-        "--device", "-d",
-        type=str,
-        default="auto",
+        "--device", "-d", type=str, default="auto",
         choices=["auto", "cpu", "cuda", "mps"],
         help="Compute device (default: auto)"
     )
     parser.add_argument(
-        "--batch-size", "-b",
-        type=int,
-        default=1,
-        help="Batch size for parallel iterations (default: 1 = vanilla CFR)"
+        "--batch-size", "-b", type=int, default=batch_default,
+        help=f"Batch size for parallel iterations (default: {batch_default})"
     )
     parser.add_argument(
-        "--quiet", "-q",
-        action="store_true",
+        "--quiet", "-q", action="store_true",
         help="Suppress progress output"
     )
+
+
+def add_kuhn_args(parser):
+    """Add kuhn-specific arguments to a parser."""
+    add_common_args(parser, iterations_default=10000, batch_default=1)
 
 
 def add_hunl_args(parser):
     """Add hunl-specific arguments to a parser."""
     parser.add_argument(
-        "--config", "-c",
-        type=str,
-        required=True,
+        "--config", "-c", type=str, required=True,
         help="Config file path or preset name (standard, aggressive)"
     )
+    add_common_args(parser, iterations_default=100000, batch_default=1024)
     parser.add_argument(
-        "--iterations", "-i",
-        type=int,
-        default=100000,
-        help="Number of CFR iterations (default: 100000)"
+        "--max-memory", "-m", type=float, default=4.0,
+        help="Maximum GPU memory in GB (default: 4.0)"
     )
     parser.add_argument(
-        "--device", "-d",
-        type=str,
-        default="auto",
-        choices=["auto", "cpu", "cuda", "mps"],
-        help="Compute device (default: auto)"
-    )
-    parser.add_argument(
-        "--batch-size", "-b",
-        type=int,
-        default=1024,
-        help="Batch size for parallel iterations (default: 1024)"
-    )
-    parser.add_argument(
-        "--max-memory", "-m",
-        type=float,
-        default=4.0,
-        help="Maximum GPU memory in GB (default: 4.0, will reduce batch size if needed)"
-    )
-    parser.add_argument(
-        "--quiet", "-q",
-        action="store_true",
-        help="Suppress progress output"
-    )
-    parser.add_argument(
-        "--action", "-a",
-        type=str,
+        "--action", "-a", type=str,
         help='Initial action sequence (e.g., "50bb SBr2.5 BBr8")'
     )
+    parser.add_argument("--no-interactive", action="store_true",
+        help="Skip interactive mode after training")
     parser.add_argument(
-        "--no-interactive",
-        action="store_true",
-        help="Skip interactive mode after training"
-    )
-    parser.add_argument(
-        "--save", "-s",
-        type=str,
-        metavar="FILE",
+        "--save", "-s", type=str, metavar="FILE",
         help="Save trained strategy to file (recommended: .strategy.gz)"
     )
     parser.add_argument(
-        "--load", "-l",
-        type=str,
-        metavar="FILE",
+        "--load", "-l", type=str, metavar="FILE",
         help="Load pre-trained strategy from file (skips training)"
     )
     parser.add_argument(
-        "--stack",
-        type=float,
-        nargs="+",
-        metavar="DEPTH",
+        "--stack", type=float, nargs="+", metavar="DEPTH",
         help="Train only specific stack depth(s) from config (e.g., --stack 25 50)"
     )
 

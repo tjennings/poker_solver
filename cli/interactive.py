@@ -12,70 +12,33 @@ from typing import Dict, List, Optional, Tuple
 from config.loader import Config
 from cli.matrix import ActionDistribution, render_matrix, render_header
 
+# Simple action aliases - maps user input to (command_type, action_code)
+ACTION_ALIASES = {
+    "b": ("back", None), "back": ("back", None),
+    "q": ("quit", None), "quit": ("quit", None),
+    "f": ("action", "f"), "fold": ("action", "f"),
+    "c": ("action", "c"), "call": ("action", "c"),
+    "x": ("action", "x"), "check": ("action", "x"),
+    "a": ("action", "a"), "all-in": ("action", "a"),
+}
+
 
 def parse_user_input(user_input: str) -> Tuple[str, Optional[str]]:
-    """Parse user input into a command type and optional value.
-
-    Args:
-        user_input: Raw user input string
-
-    Returns:
-        Tuple of (command_type, value) where:
-        - command_type is one of: "action", "back", "quit", "invalid"
-        - value is the action string for "action" type, original input for
-          "invalid", or None for "back"/"quit"
-
-    Examples:
-        >>> parse_user_input("f")
-        ('action', 'f')
-        >>> parse_user_input("r8")
-        ('action', 'r8')
-        >>> parse_user_input("b")
-        ('back', None)
-        >>> parse_user_input("xyz")
-        ('invalid', 'xyz')
-    """
+    """Parse user input into a command type and optional value."""
     cleaned = user_input.strip().lower()
 
-    # Back command
-    if cleaned in ("b", "back"):
-        return ("back", None)
-
-    # Quit command
-    if cleaned in ("q", "quit"):
-        return ("quit", None)
-
-    # Fold
-    if cleaned in ("f", "fold"):
-        return ("action", "f")
-
-    # Call
-    if cleaned in ("c", "call"):
-        return ("action", "c")
-
-    # Check
-    if cleaned in ("x", "check"):
-        return ("action", "x")
-
-    # All-in
-    if cleaned in ("a", "all-in"):
-        return ("action", "a")
+    # Check simple aliases first
+    if cleaned in ACTION_ALIASES:
+        return ACTION_ALIASES[cleaned]
 
     # Raise (rX or rX.X)
-    if cleaned.startswith("r"):
-        # Validate it has a numeric value after 'r'
-        raise_match = re.match(r"^r(\d+(?:\.\d+)?)$", cleaned)
-        if raise_match:
-            return ("action", cleaned)
+    if match := re.match(r"^r(\d+(?:\.\d+)?)$", cleaned):
+        return ("action", cleaned)
 
     # Stack switch (sX or sX.X)
-    if cleaned.startswith("s") and len(cleaned) > 1:
-        # Validate it has a numeric value after 's'
-        stack_match = re.match(r"^s(\d+(?:\.\d+)?)$", cleaned)
-        if stack_match:
-            return ("switch_stack", stack_match.group(1))
+    if match := re.match(r"^s(\d+(?:\.\d+)?)$", cleaned):
+        return ("switch_stack", match.group(1))
 
-    # Invalid input
     return ("invalid", user_input.strip())
 
 
@@ -181,83 +144,34 @@ class InteractiveSession:
         return "SB" if len(self.history) % 2 == 0 else "BB"
 
     def get_pot(self) -> float:
-        """Calculate the current pot size.
-
-        Returns:
-            Pot size in big blinds
-        """
-        # Start with blinds: SB 0.5, BB 1.0
-        pot = 1.5
-        sb_committed = 0.5
-        bb_committed = 1.0
+        """Calculate the current pot size."""
+        pot = 1.5  # Start with blinds
+        committed = [0.5, 1.0]  # [SB, BB]
 
         for i, action in enumerate(self.history):
-            current_player = i % 2  # 0 = SB, 1 = BB
-
-            # Get the bet this player needs to match (look at prior history)
-            current_bet = self._get_bet_at_index(i)
-
-            if current_player == 0:
-                # SB acting
-                if action == "c":
-                    # SB calls/checks - match current bet
-                    amount_to_add = current_bet - sb_committed
-                    pot += amount_to_add
-                    sb_committed = current_bet
-                elif action == "a":
-                    # All-in
-                    amount_to_add = self.stack - sb_committed
-                    pot += amount_to_add
-                    sb_committed = self.stack
-                elif action.startswith("r"):
-                    # Raise to X
-                    raise_to = float(action[1:])
-                    amount_to_add = raise_to - sb_committed
-                    pot += amount_to_add
-                    sb_committed = raise_to
-                # fold adds nothing
-            else:
-                # BB acting
-                if action == "c":
-                    # BB calls/checks - match current bet
-                    amount_to_add = current_bet - bb_committed
-                    pot += amount_to_add
-                    bb_committed = current_bet
-                elif action == "a":
-                    # All-in
-                    amount_to_add = self.stack - bb_committed
-                    pot += amount_to_add
-                    bb_committed = self.stack
-                elif action.startswith("r"):
-                    # Raise to X
-                    raise_to = float(action[1:])
-                    amount_to_add = raise_to - bb_committed
-                    pot += amount_to_add
-                    bb_committed = raise_to
-                # fold adds nothing
-
+            player = i % 2
+            if action == "c":
+                bet = self._get_bet_at_index(i)
+                pot += bet - committed[player]
+                committed[player] = bet
+            elif action == "a":
+                pot += self.stack - committed[player]
+                committed[player] = self.stack
+            elif action.startswith("r"):
+                raise_to = float(action[1:])
+                pot += raise_to - committed[player]
+                committed[player] = raise_to
         return pot
 
     def _get_bet_at_index(self, action_idx: int) -> float:
-        """Get the bet amount at a specific action index.
-
-        Scans backward from the given action index to find the most recent
-        raise or all-in that set the bet amount.
-
-        Args:
-            action_idx: Index into history of the action being considered.
-
-        Returns:
-            The bet amount in BB that was active at action_idx.
-            Returns 1.0 (BB) if no prior raises exist.
-        """
+        """Get the bet amount before a specific action index."""
         for i in range(action_idx - 1, -1, -1):
             action = self.history[i]
             if action.startswith("r"):
                 return float(action[1:])
             elif action == "a":
                 return self.stack
-        return 1.0  # Default is BB = 1
+        return 1.0
 
     def get_legal_actions(self) -> List[str]:
         """Get legal actions at the current state.
@@ -294,75 +208,23 @@ class InteractiveSession:
         return actions
 
     def _get_current_bet(self) -> float:
-        """Get the current bet amount that must be matched.
-
-        Scans the action history in reverse to find the most recent raise
-        or all-in action. If no raises have occurred, returns 1.0 (the BB).
-
-        Returns:
-            The current bet size in big blinds that the acting player must match.
-        """
-        if not self.history:
-            return 1.0  # BB is 1
-
-        # Look for the most recent raise or all-in
-        for action in reversed(self.history):
-            if action.startswith("r"):
-                return float(action[1:])
-            elif action == "a":
-                return self.stack
-
-        # No raise found - bet is 1BB (the BB)
-        return 1.0
+        """Get the current bet amount that must be matched."""
+        return self._get_bet_at_index(len(self.history))
 
     def _get_player_committed(self) -> float:
-        """Get amount the current player has committed to the pot.
+        """Get amount the current player has committed to the pot."""
+        player = len(self.history) % 2
+        committed = 0.5 if player == 0 else 1.0
 
-        Calculates the total amount the current player (determined by history
-        length) has put into the pot, including their initial blind and any
-        calls, raises, or all-in actions.
-
-        Returns:
-            The total amount committed by the current player in big blinds.
-        """
-        current_player = len(self.history) % 2
-        # Initial blinds
-        committed = 0.5 if current_player == 0 else 1.0
-
-        # Process this player's actions in history
         for i, action in enumerate(self.history):
-            if i % 2 == current_player:
+            if i % 2 == player:
                 if action == "c":
-                    # Called - matched previous bet
-                    bet_at_call = self._get_bet_before_action(i)
-                    committed = bet_at_call
+                    committed = self._get_bet_at_index(i)
                 elif action == "a":
                     committed = self.stack
                 elif action.startswith("r"):
                     committed = float(action[1:])
-
         return committed
-
-    def _get_bet_before_action(self, action_idx: int) -> float:
-        """Get the bet amount before a specific action index.
-
-        Scans backward from the given action index to find the most recent
-        raise or all-in that set the bet amount the player needed to match.
-
-        Args:
-            action_idx: Index into history of the action being considered.
-
-        Returns:
-            The bet amount in BB that was active before action_idx.
-            Returns 1.0 (BB) if no prior raises exist.
-        """
-        for i in range(action_idx - 1, -1, -1):
-            action = self.history[i]
-            if action.startswith("r"):
-                return float(action[1:])
-            elif action == "a":
-                return self.stack
-        return 1.0  # Default is BB = 1
 
     def is_terminal(self) -> bool:
         """Check if current state is terminal.
