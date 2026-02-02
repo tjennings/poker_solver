@@ -1,0 +1,14 @@
+# Per-flop solving configuration
+# Simplified config for tractable per-flop full game solving
+
+name: "Per-Flop Solving"
+stack_depths: [25]
+
+# Preflop: simple raise structure
+raise_sizes: [2.5, 8]
+max_bets_per_round: 3
+
+# Postflop: pot-size bet only, 1 bet per round
+# This keeps the tree small enough to solve
+postflop_max_bets_per_round: 1
+# postflop_raise_sizes not set = use pot-relative sizing

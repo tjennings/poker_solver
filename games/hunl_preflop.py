@@ -5,7 +5,7 @@ Implements the Game interface for Heads-Up No-Limit Texas Hold'em
 with support for preflop through river play.
 """
 
-from typing import Tuple, List, NamedTuple
+from typing import Tuple, List, NamedTuple, Dict, Optional
 
 from config.loader import Config
 from core.hands import hand_to_string, HAND_COUNT
@@ -13,12 +13,30 @@ from core.equity import get_preflop_equity
 from games.base import Game
 
 
-# Fixed board for initial implementation
+# Default board for backward compatibility
 FIXED_BOARD = {
     "flop": ("Ah", "Th", "6c"),
     "turn": ("Ah", "Th", "6c", "Jc"),
     "river": ("Ah", "Th", "6c", "Jc", "8c"),
 }
+
+
+def make_board_config(flop: Tuple[str, str, str], turn: str = "Jc", river: str = "8c") -> Dict[str, Tuple[str, ...]]:
+    """Create a board config dict from flop cards.
+
+    Args:
+        flop: Tuple of 3 flop cards, e.g., ("Kh", "Kd", "Ts")
+        turn: Turn card (default "Jc")
+        river: River card (default "8c")
+
+    Returns:
+        Dict with 'flop', 'turn', 'river' keys mapping to board tuples.
+    """
+    return {
+        "flop": flop,
+        "turn": flop + (turn,),
+        "river": flop + (turn, river),
+    }
 
 
 class HUNLState(NamedTuple):
@@ -49,18 +67,24 @@ class HUNLPreflop(Game):
     - Terminal: fold, or showdown after river betting complete
     """
 
-    def __init__(self, config: Config, preflop_only: bool = False):
+    def __init__(self, config: Config, preflop_only: bool = False, board: Optional[Dict[str, Tuple[str, ...]]] = None, terminal_street: str = "river"):
         """
         Initialize HUNL game.
 
         Args:
             config: Configuration with stack_depth and raise_sizes
             preflop_only: If True, use preflop-only terminal conditions
+            board: Custom board config dict with 'flop', 'turn', 'river' keys.
+                   If None, uses FIXED_BOARD.
+            terminal_street: Street at which showdown occurs ("flop", "turn", or "river").
+                            Only used when preflop_only=False.
         """
         self.config = config
         self.stack_depth = config.stack_depth
         self.raise_sizes = config.raise_sizes
         self.preflop_only = preflop_only
+        self.board_config = board if board is not None else FIXED_BOARD
+        self.terminal_street = terminal_street
 
     def initial_states(self) -> List[HUNLState]:
         """
@@ -107,14 +131,34 @@ class HUNLPreflop(Game):
             # Preflop-only mode: terminal when betting is complete
             return betting_complete
         else:
-            # Full game: only terminal on river when betting is complete
-            if state.street == "river" and betting_complete:
+            # Full game: terminal on terminal_street when betting is complete
+            if state.street == self.terminal_street and betting_complete:
                 return True
             return False
 
     def player(self, state: HUNLState) -> int:
         """Return player to act at state."""
         return state.to_act
+
+    def _count_bets_this_round(self, state: HUNLState) -> int:
+        """Count the number of bets/raises on the current street.
+
+        For preflop, the BB counts as the first bet.
+        """
+        count = 0
+        # Find actions on current street (after last street marker, or from start for preflop)
+        for action in reversed(state.history):
+            if action.startswith("/"):
+                # Hit a street marker, stop counting
+                break
+            if action.startswith("r") or action == "a":
+                count += 1
+
+        # For preflop, the BB counts as a bet
+        if state.street == "preflop":
+            count += 1
+
+        return count
 
     def actions(self, state: HUNLState) -> List[str]:
         """
@@ -125,6 +169,10 @@ class HUNLPreflop(Game):
         - 'c': call/check
         - 'rX': raise to X BB
         - 'a': all-in
+
+        Bet sizing rules:
+        - Each subsequent bet must use at least the next raise size up
+        - Final bet (at max_bets_per_round) must be all-in
         """
         actions = []
 
@@ -143,13 +191,42 @@ class HUNLPreflop(Game):
         if current_bet >= state.stack:
             return actions
 
-        # Get legal raise sizes from config
-        legal_raises = self.config.get_legal_raise_sizes(current_bet, state.stack)
-        for size in legal_raises:
-            actions.append(f"r{size:g}")
+        # Count bets this round to determine available raise sizes
+        bets_this_round = self._count_bets_this_round(state)
 
-        # All-in option - always include if stack > current_bet
-        # (even if stack happens to equal a raise size, 'a' is a distinct action)
+        # Use postflop-specific settings for non-preflop streets
+        if state.street == "preflop":
+            max_bets = self.config.max_bets_per_round
+            raise_sizes = self.config.raise_sizes
+        else:
+            max_bets = self.config.postflop_max_bets_per_round
+            # Postflop: use pot-relative sizing if not configured
+            if self.config.postflop_raise_sizes:
+                raise_sizes = self.config.postflop_raise_sizes
+            else:
+                # Default: pot-size bet only (simplest tree)
+                raise_sizes = [state.pot]
+
+        # At max bets, no more raises allowed
+        if bets_this_round >= max_bets:
+            return actions
+
+        # At max_bets - 1, only all-in is allowed as the final bet
+        if bets_this_round == max_bets - 1:
+            if state.stack > current_bet:
+                actions.append("a")
+            return actions
+
+        # Get legal raise sizes - must use at least raise_sizes[bets_this_round]
+        # (escalating minimum bet size)
+        min_size_idx = min(bets_this_round, len(raise_sizes) - 1)
+        min_raise_size = raise_sizes[min_size_idx]
+
+        for size in raise_sizes[min_size_idx:]:
+            if size > current_bet and size <= state.stack:
+                actions.append(f"r{size:g}")
+
+        # All-in option
         if state.stack > current_bet:
             actions.append("a")
 
@@ -211,8 +288,8 @@ class HUNLPreflop(Game):
             current_bet=new_current_bet,
         )
 
-        # Check for street transition (not in preflop-only mode)
-        if not self.preflop_only and self._betting_complete(new_state) and new_state.street != "river":
+        # Check for street transition (not in preflop-only mode, and not at terminal street)
+        if not self.preflop_only and self._betting_complete(new_state) and new_state.street != self.terminal_street:
             new_state = self._advance_street(new_state)
 
         return new_state
@@ -275,8 +352,8 @@ class HUNLPreflop(Game):
         next_streets = {"preflop": "flop", "flop": "turn", "turn": "river"}
         new_street = next_streets[state.street]
 
-        # Get new board from fixed board
-        new_board = FIXED_BOARD[new_street]
+        # Get new board from board config
+        new_board = self.board_config[new_street]
 
         # Add street marker to history (e.g., "/flop", "/turn", "/river")
         new_history = state.history + (f"/{new_street}",)

@@ -2,12 +2,13 @@
 
 Provides an interactive loop for navigating the game tree and viewing
 strategy matrices for different action sequences. Supports both preflop
-and post-flop play.
+and post-flop play with on-demand subgame solving.
 """
 
 from __future__ import annotations
 
 import re
+import sys
 from typing import Dict, List, Optional, Tuple
 
 from config.loader import Config
@@ -63,7 +64,15 @@ class InteractiveSession:
         board: Current board cards as tuple of strings
     """
 
-    def __init__(self, config: Config, raw_strategy: Dict, preflop_only: bool = False):
+    def __init__(
+        self,
+        config: Config,
+        raw_strategy: Dict,
+        preflop_only: bool = False,
+        postflop_batch_size: int = 10,
+        postflop_iterations: int = 1000,
+        board: Tuple[str, ...] = None,
+    ):
         """Initialize an interactive session.
 
         Args:
@@ -72,13 +81,30 @@ class InteractiveSession:
                 "SB:AA::r2.5-r8" mapping to action probabilities.
                 Can be flat format or nested {stack: {info_set: probs}} format.
             preflop_only: If True, terminal states are preflop-only (no post-flop streets)
+            postflop_batch_size: Batch size for on-demand postflop solving
+            postflop_iterations: CFR iterations for postflop solving
+            board: Custom board cards (e.g., ('Ah', 'Kd', '2c', 'Js', '8d'))
         """
         self.config = config
         self.preflop_only = preflop_only
+        self.postflop_batch_size = postflop_batch_size
+        self.postflop_iterations = postflop_iterations
         self.history: List[str] = []
         self.street: str = "preflop"
         self.board: Tuple[str, ...] = ()
         self.street_contributions: List[float] = [0.0, 0.0]
+        self._postflop_solved_for: Optional[str] = None  # Preflop history we solved postflop for
+        self._replaying = False  # True during go_back replay
+
+        # Set up custom board or use default
+        if board:
+            self._custom_board = {
+                "flop": board[:3],
+                "turn": board[:4] if len(board) >= 4 else board[:3] + ("?",),
+                "river": board[:5] if len(board) >= 5 else board[:3] + ("?", "?"),
+            }
+        else:
+            self._custom_board = None  # Use FIXED_BOARD
 
         # Detect strategy format and set up multi-stack support
         self._is_multi_stack = self._detect_multi_stack(raw_strategy)
@@ -126,7 +152,92 @@ class InteractiveSession:
         self.street = "preflop"
         self.board = ()
         self.street_contributions = [0.0, 0.0]
+        self._postflop_solved_for = None
         return True
+
+    def _solve_postflop_subgame(self, pot: float, stacks: Tuple[float, float]) -> None:
+        """Solve the postflop subgame starting from current state.
+
+        Args:
+            pot: Pot size entering flop
+            stacks: (SB stack, BB stack) remaining after preflop
+        """
+        from games.postflop_subgame import PostflopSubgame
+        from solver import Solver
+        from dataclasses import replace
+
+        print("\n" + "=" * 50)
+        print("Solving postflop subgame...")
+        print(f"Pot: {pot:.1f}BB | Stacks: {stacks[0]:.1f}/{stacks[1]:.1f}BB")
+
+        # Create simplified postflop config to keep tree tractable
+        if self.config.postflop_raise_sizes is not None:
+            postflop_raises = self.config.postflop_raise_sizes
+        else:
+            # Default: use 2 pot-relative sizes (2/3 pot, pot) to keep tree small
+            effective_stack = min(stacks)
+            postflop_raises = []
+            for multiplier in [0.67, 1.0]:
+                size = round(pot * multiplier, 1)
+                if size <= effective_stack and size > 0:
+                    postflop_raises.append(size)
+            if not postflop_raises:
+                postflop_raises = [effective_stack]  # Just all-in if stacks tiny
+
+        postflop_config = replace(
+            self.config,
+            raise_sizes=postflop_raises,
+            max_bets_per_round=self.config.postflop_max_bets_per_round,
+        )
+
+        print(f"Postflop config: raises={postflop_raises}, max_bets={postflop_config.max_bets_per_round}")
+        print("=" * 50)
+        sys.stdout.flush()
+
+        # Create and solve the postflop subgame
+        game = PostflopSubgame(
+            config=postflop_config,
+            starting_pot=pot,
+            starting_stacks=stacks,
+            starting_street="flop",
+            board=self._custom_board,
+        )
+
+        solver = Solver(
+            game=game,
+            device="auto",
+            batch_size=self.postflop_batch_size,
+            verbose=True,
+        )
+
+        postflop_strategy = solver.solve(
+            iterations=self.postflop_iterations,
+            verbose=True,
+        )
+
+        # Merge postflop strategy into raw_strategy
+        # Postflop keys are like "SB:AA:AhTh6c:/flop-c-r3"
+        # We need to prepend the preflop history
+        preflop_history = "-".join(a for a in self.history if not a.startswith("/"))
+
+        for info_key, probs in postflop_strategy.items():
+            # Parse: "POSITION:HAND:BOARD:HISTORY"
+            parts = info_key.split(":")
+            if len(parts) == 4:
+                position, hand, board, postflop_hist = parts
+                # Combine preflop and postflop history with /flop marker
+                # Interactive session has history like: r3-c-/flop-c-r3...
+                # Postflop subgame history is: c-r3... (actions after /flop)
+                if postflop_hist:
+                    full_history = f"{preflop_history}-/flop-{postflop_hist}"
+                else:
+                    full_history = f"{preflop_history}-/flop"
+                new_key = f"{position}:{hand}:{board}:{full_history}"
+                self.raw_strategy[new_key] = probs
+
+        print(f"\nPostflop strategy computed ({len(postflop_strategy):,} info sets)")
+        print("Press Enter to continue...")
+        input()
 
     def apply_action(self, action: str) -> None:
         """Apply an action to the current state.
@@ -192,12 +303,118 @@ class InteractiveSession:
 
     def _advance_street(self) -> None:
         """Advance to next street."""
+        old_street = self.street
         next_streets = {"preflop": "flop", "flop": "turn", "turn": "river"}
         self.street = next_streets[self.street]
-        self.board = FIXED_BOARD[self.street]
         self.street_contributions = [0.0, 0.0]
+
+        # Prompt for board when entering flop (not during replay)
+        if old_street == "preflop" and self.street == "flop" and not self._replaying:
+            self._prompt_for_board()
+        elif self._custom_board:
+            self.board = self._custom_board[self.street]
+        else:
+            self.board = FIXED_BOARD[self.street]
+
         # Add street marker to history
         self.history.append(f"/{self.street}")
+
+        # Trigger postflop solving when reaching flop (not during replay)
+        if old_street == "preflop" and self.street == "flop" and not self._replaying:
+            # Get preflop history (excluding the street marker we just added)
+            preflop_history = "-".join(a for a in self.history if not a.startswith("/"))
+
+            # Only solve if we haven't solved for this exact preflop line
+            if self._postflop_solved_for != preflop_history:
+                pot = self.get_pot()
+                stacks = self._get_remaining_stacks()
+                self._solve_postflop_subgame(pot, stacks)
+                self._postflop_solved_for = preflop_history
+
+    def _prompt_for_board(self) -> None:
+        """Prompt user to enter board cards."""
+        print("\n" + "=" * 50)
+        print("Enter 5 board cards (e.g., 'AhKd2cJs8s')")
+        print("Press Enter for default board (Ah Th 6c Jc 8c)")
+        print("=" * 50)
+
+        while True:
+            board_str = input("Board: ").strip()
+
+            if not board_str:
+                # Use default
+                self._custom_board = None
+                self.board = FIXED_BOARD["flop"]
+                return
+
+            try:
+                cards = self._parse_board_input(board_str)
+                if len(cards) < 5:
+                    print(f"Need 5 cards (flop+turn+river), got {len(cards)}")
+                    continue
+
+                self._custom_board = {
+                    "flop": cards[:3],
+                    "turn": cards[:4],
+                    "river": cards[:5],
+                }
+                self.board = self._custom_board["flop"]
+                print(f"Board: {' '.join(cards[:3])} | {cards[3]} | {cards[4]}")
+                return
+
+            except ValueError as e:
+                print(f"Invalid board: {e}")
+
+    def _parse_board_input(self, board_str: str) -> Tuple[str, ...]:
+        """Parse board string into tuple of cards."""
+        board_str = board_str.replace(" ", "")
+
+        if len(board_str) % 2 != 0:
+            raise ValueError("Each card must be 2 characters (rank + suit)")
+
+        cards = []
+        valid_ranks = "23456789TJQKA"
+        valid_suits = "cdhs"
+
+        for i in range(0, len(board_str), 2):
+            rank = board_str[i].upper()
+            suit = board_str[i + 1].lower()
+
+            if rank not in valid_ranks:
+                raise ValueError(f"Invalid rank '{rank}'")
+            if suit not in valid_suits:
+                raise ValueError(f"Invalid suit '{suit}'")
+
+            cards.append(rank + suit)
+
+        return tuple(cards)
+
+    def _get_remaining_stacks(self) -> Tuple[float, float]:
+        """Get remaining stacks for both players after preflop betting."""
+        # Track committed amounts (what each player has put in)
+        committed = [0.5, 1.0]  # SB blind, BB blind
+        current_bet = 1.0  # BB is current highest bet
+
+        player = 0  # SB acts first preflop
+        for action in self.history:
+            if action.startswith("/"):
+                break  # Stop at street marker
+            if action == "c":
+                # Call - match current bet
+                committed[player] = current_bet
+            elif action == "a":
+                # All-in
+                committed[player] = self.stack
+                current_bet = max(current_bet, self.stack)
+            elif action.startswith("r"):
+                raise_to = float(action[1:])
+                committed[player] = raise_to
+                current_bet = raise_to
+            player = 1 - player
+
+        sb_stack = self.stack - committed[0]
+        bb_stack = self.stack - committed[1]
+        return (sb_stack, bb_stack)
 
     def go_back(self) -> bool:
         """Go back one action in the history.
@@ -215,13 +432,15 @@ class InteractiveSession:
         if old_history:
             old_history.pop()  # Remove the actual action
 
-        # Replay from the beginning to rebuild state
+        # Replay from the beginning to rebuild state (without triggering re-solve)
+        self._replaying = True
         self._reset_state()
         for action in old_history:
             if action.startswith("/"):
                 # Skip markers, they're added by _advance_street
                 continue
             self.apply_action(action)
+        self._replaying = False
         return True
 
     def _reset_state(self) -> None:
@@ -230,6 +449,7 @@ class InteractiveSession:
         self.street = "preflop"
         self.board = ()
         self.street_contributions = [0.0, 0.0]
+        # Don't reset _postflop_solved - keep the solved strategy available
 
     def get_current_player(self) -> str:
         """Get the current player to act.
@@ -455,7 +675,9 @@ class InteractiveSession:
 def run_interactive(
     config: Config,
     strategy: Dict,
-    initial_actions: tuple = ()
+    initial_actions: tuple = (),
+    preflop_only: bool = True,
+    board: tuple = None
 ) -> None:
     """Run the interactive exploration loop.
 
@@ -463,8 +685,10 @@ def run_interactive(
         config: Game configuration
         strategy: Strategy dictionary (flat or nested multi-stack format)
         initial_actions: Optional tuple of actions to pre-apply to the session
+        preflop_only: If True, terminal states are preflop-only (no post-flop streets)
+        board: Custom board cards tuple (e.g., ('Ah', 'Kd', '2c') for flop)
     """
-    session = InteractiveSession(config, strategy)
+    session = InteractiveSession(config, strategy, preflop_only=preflop_only, board=board)
     for action in initial_actions:
         session.apply_action(action)
 

@@ -15,6 +15,52 @@ import time
 
 from games.kuhn import KuhnPoker
 from solver import Solver
+from config.loader import load_flops
+
+
+def parse_board(board_str: str) -> tuple:
+    """Parse a board string like 'AhKd2c' into tuple of cards ('Ah', 'Kd', '2c').
+
+    Args:
+        board_str: Board string with 2-char cards (e.g., "AhKd2cJs8d")
+
+    Returns:
+        Tuple of card strings
+
+    Raises:
+        ValueError: If board string is invalid
+    """
+    if not board_str:
+        return None
+
+    # Remove spaces
+    board_str = board_str.replace(" ", "")
+
+    # Each card is 2 characters (rank + suit)
+    if len(board_str) % 2 != 0:
+        raise ValueError(f"Invalid board string: {board_str} (must be pairs of rank+suit)")
+
+    cards = []
+    valid_ranks = "23456789TJQKA"
+    valid_suits = "cdhs"
+
+    for i in range(0, len(board_str), 2):
+        rank = board_str[i].upper()
+        suit = board_str[i + 1].lower()
+
+        if rank not in valid_ranks:
+            raise ValueError(f"Invalid rank '{rank}' in board string")
+        if suit not in valid_suits:
+            raise ValueError(f"Invalid suit '{suit}' in board string")
+
+        cards.append(rank + suit)
+
+    if len(cards) < 3:
+        raise ValueError(f"Board must have at least 3 cards (flop), got {len(cards)}")
+    if len(cards) > 5:
+        raise ValueError(f"Board cannot have more than 5 cards, got {len(cards)}")
+
+    return tuple(cards)
 
 
 def run_kuhn(args):
@@ -63,10 +109,91 @@ def run_kuhn(args):
         print(f"  {card} {history:8s}: pass={probs['p']:.3f}  bet={probs['b']:.3f}")
 
 
+def run_hunl_per_flop(args, config, flops):
+    """Run HUNL solver for multiple flops, solving each independently.
+
+    Args:
+        args: Parsed command line arguments
+        config: Config object
+        flops: List of flop tuples to solve
+
+    Returns:
+        Combined strategy dict
+    """
+    from games.hunl_preflop import HUNLPreflop, make_board_config
+    from dataclasses import replace
+
+    total_flops = len(flops)
+    all_strategies = {}
+    total_start_time = time.time()
+
+    # Get terminal street setting
+    terminal_street = getattr(args, 'terminal_street', 'river')
+
+    if not args.quiet:
+        print(f"Solving {total_flops} flops independently...")
+        if terminal_street != 'river':
+            print(f"(Terminal street: {terminal_street})")
+        print()
+
+    for i, flop in enumerate(flops):
+        flop_str = "".join(flop)
+
+        if not args.quiet:
+            print(f"[{i+1}/{total_flops}] Flop: {flop[0]} {flop[1]} {flop[2]}")
+            print("-" * 40)
+
+        # Create board config for this flop
+        board_config = make_board_config(flop)
+
+        # Create config for single stack depth
+        single_stack_config = replace(config, stack_depths=[config.stack_depths[0]])
+
+        # Create game with this specific flop
+        game = HUNLPreflop(single_stack_config, preflop_only=False, board=board_config, terminal_street=terminal_street)
+
+        # Create solver
+        solver = Solver(
+            game=game,
+            device=args.device,
+            batch_size=args.batch_size,
+            verbose=not args.quiet,
+        )
+
+        # Solve
+        start_time = time.time()
+        flop_strategy = solver.solve(
+            iterations=args.iterations,
+            verbose=not args.quiet,
+        )
+        elapsed = time.time() - start_time
+
+        # Store strategy keyed by flop
+        all_strategies[flop_str] = flop_strategy
+
+        if not args.quiet:
+            print(f"Time: {elapsed:.2f}s | Info sets: {len(flop_strategy):,}")
+            print()
+
+    total_elapsed = time.time() - total_start_time
+
+    if not args.quiet:
+        print("=" * 50)
+        print("Per-Flop Solving Complete")
+        print("=" * 50)
+        print(f"Total flops: {total_flops}")
+        print(f"Total time: {total_elapsed:.2f}s")
+        total_info_sets = sum(len(s) for s in all_strategies.values())
+        print(f"Total info sets: {total_info_sets:,}")
+        print()
+
+    return all_strategies
+
+
 def run_hunl(args):
     """Run HUNL Preflop solver."""
     from config import load_config, get_preset_path
-    from games.hunl_preflop import HUNLPreflop
+    from games.hunl_preflop import HUNLPreflop, make_board_config
     from cli.parser import parse_action_sequence
     from cli.interactive import run_interactive
     from dataclasses import replace
@@ -102,6 +229,52 @@ def run_hunl(args):
             sys.exit(1)
         config = replace(config, stack_depths=requested_stacks)
 
+    # Handle --flops mode (per-flop solving)
+    if hasattr(args, 'flops') and args.flops is not None:
+        try:
+            all_flops = load_flops()
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.flops not in all_flops:
+            available = ", ".join(str(k) for k in sorted(all_flops.keys()))
+            print(f"Error: Flop category {args.flops} not found. Available: {available}", file=sys.stderr)
+            sys.exit(1)
+
+        flops = all_flops[args.flops]
+
+        if not args.quiet:
+            print("=" * 50)
+            print("CFR Poker Solver - HUNL Per-Flop")
+            print("=" * 50)
+            print(f"Config: {config.name}")
+            print(f"Stack depth: {config.stack_depths[0]} BB")
+            print(f"Raise sizes: {config.raise_sizes}")
+            print(f"Flop category: {args.flops} ({len(flops)} flops)")
+            print(f"Iterations: {args.iterations}")
+            print(f"Device: {args.device}")
+            print(f"Batch size: {args.batch_size}")
+            print()
+
+        strategy = run_hunl_per_flop(args, config, flops)
+
+        # Save strategy if requested
+        if args.save:
+            Solver.save_multi_stack_strategy(args.save, strategy)
+            if not args.quiet:
+                size_mb = os.path.getsize(args.save) / (1024 * 1024)
+                print(f"Strategy saved to: {args.save} ({size_mb:.1f} MB)")
+                print()
+
+        # Skip interactive mode for per-flop solving (too many strategies to navigate)
+        if not args.quiet:
+            print("Per-flop solving complete. Use --load to explore individual flop strategies.")
+        return
+
+    # Determine if we're training preflop-only or full game
+    preflop_only = not args.postflop
+
     # Parse action sequence if provided (may override stack for interactive)
     initial_actions = ()
     interactive_stack = None
@@ -118,6 +291,9 @@ def run_hunl(args):
 
     # Load pre-trained strategy or train new one
     if args.load:
+        # When loading a strategy, enable postflop (subgame solving handles it on-demand)
+        preflop_only = False
+
         if not args.quiet:
             print("=" * 50)
             print("CFR Poker Solver - HUNL Preflop")
@@ -148,7 +324,8 @@ def run_hunl(args):
 
         if not args.quiet:
             print("=" * 50)
-            print("CFR Poker Solver - HUNL Preflop")
+            game_mode = "HUNL Full Game" if args.postflop else "HUNL Preflop"
+            print(f"CFR Poker Solver - {game_mode}")
             print("=" * 50)
             print(f"Config: {config.name}")
             if multi_stack:
@@ -189,8 +366,8 @@ def run_hunl(args):
             # Create config for this stack depth
             single_stack_config = replace(config, stack_depths=[stack_depth])
 
-            # Create game and solver (preflop_only=True for optimized compilation)
-            game = HUNLPreflop(single_stack_config, preflop_only=True)
+            # Create game and solver
+            game = HUNLPreflop(single_stack_config, preflop_only=preflop_only)
 
             if can_share_compilation:
                 if shared_solver is None:
@@ -200,8 +377,7 @@ def run_hunl(args):
                         device=args.device,
                         batch_size=args.batch_size,
                         verbose=not args.quiet,
-                        max_memory_gb=args.max_memory,
-                        store_terminal_states=True,
+                                                store_terminal_states=True,
                     )
                     shared_solver = solver
                 else:
@@ -216,8 +392,7 @@ def run_hunl(args):
                     device=args.device,
                     batch_size=args.batch_size,
                     verbose=not args.quiet,
-                    max_memory_gb=args.max_memory,
-                )
+                                    )
 
             # Train
             start_time = time.time()
@@ -234,7 +409,11 @@ def run_hunl(args):
                 print()
                 if multi_stack:
                     print(f"[{int(stack_depth) if stack_depth == int(stack_depth) else stack_depth}BB] ", end="")
-                print(f"Time: {elapsed:.2f}s | Exploitability: {solver.exploitability():.6f}")
+                if preflop_only:
+                    print(f"Time: {elapsed:.2f}s | Exploitability: {solver.exploitability():.6f}")
+                else:
+                    # Skip exploitability for postflop - tree too deep for recursive calculation
+                    print(f"Time: {elapsed:.2f}s")
                 print()
 
         total_elapsed = time.time() - total_start_time
@@ -276,7 +455,13 @@ def run_hunl(args):
             print(f"Warning: Requested stack {interactive_stack}BB not in strategy. Available: {available_str}")
 
     if not args.no_interactive:
-        run_interactive(config, strategy, initial_actions=initial_actions)
+        # Parse board if provided
+        board = None
+        if hasattr(args, 'board') and args.board:
+            board = parse_board(args.board)
+
+        # Always enable postflop in interactive mode - subgame solving handles it on-demand
+        run_interactive(config, strategy, initial_actions=initial_actions, preflop_only=False, board=board)
     else:
         if not args.quiet:
             print("Training complete. Use --no-interactive to skip interactive mode.")
@@ -316,10 +501,6 @@ def add_hunl_args(parser):
     )
     add_common_args(parser, iterations_default=100000, batch_default=1024)
     parser.add_argument(
-        "--max-memory", "-m", type=float, default=4.0,
-        help="Maximum GPU memory in GB (default: 4.0)"
-    )
-    parser.add_argument(
         "--action", "-a", type=str,
         help='Initial action sequence (e.g., "50bb SBr2.5 BBr8")'
     )
@@ -336,6 +517,22 @@ def add_hunl_args(parser):
     parser.add_argument(
         "--stack", type=float, nargs="+", metavar="DEPTH",
         help="Train only specific stack depth(s) from config (e.g., --stack 25 50)"
+    )
+    parser.add_argument(
+        "--postflop", action="store_true",
+        help="Train full game through river (default: preflop only)"
+    )
+    parser.add_argument(
+        "--board", type=str,
+        help='Board cards for postflop (e.g., "AhKd2c" for flop, "AhKd2cJs" through turn)'
+    )
+    parser.add_argument(
+        "--flops", type=int, metavar="CATEGORY",
+        help='Solve for configured flops (25, 49, 85, or 184 from config/flops.yaml)'
+    )
+    parser.add_argument(
+        "--terminal-street", type=str, choices=["flop", "turn", "river"], default="river",
+        help='Street at which showdown occurs (default: river). Use "flop" for faster per-flop solving.'
     )
 
 

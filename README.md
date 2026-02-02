@@ -2,7 +2,7 @@
 
 A Counterfactual Regret Minimization (CFR) solver for extensive-form games, implemented in Python with PyTorch for GPU acceleration.
 
-Supports **Kuhn Poker** and **Heads-Up No-Limit Hold'em (HUNL) Preflop** with an interactive strategy explorer.
+Supports **Kuhn Poker** and **Heads-Up No-Limit Hold'em (HUNL)** with preflop through postflop solving and an interactive strategy explorer.
 
 ## Features
 
@@ -11,6 +11,8 @@ Supports **Kuhn Poker** and **Heads-Up No-Limit Hold'em (HUNL) Preflop** with an
 - **Multi-device support** - CPU, CUDA, and Apple Silicon (MPS)
 - **Exploitability calculation** - Measure strategy quality
 - **HUNL Preflop Solver** - Full preflop equilibrium with 169 hand buckets
+- **Per-Flop Solving** - Solve multiple flops independently and merge results
+- **On-Demand Subgame Solving** - Solve postflop subtrees interactively
 - **Interactive Strategy Explorer** - Color-coded 13x13 matrix display
 - **Configurable Bet Sizes** - YAML presets for different stack depths
 - **Extensible game interface** - Add new games easily
@@ -93,6 +95,41 @@ python main.py hunl --config standard --iterations 100000 --save strategy.gz
 
 # Load pre-trained strategy (skips training entirely)
 python main.py hunl --config standard --load strategy.gz
+
+# Train full game (preflop through river) - requires simplified config
+python main.py hunl --config perflop --iterations 1000 --postflop
+
+# Train specific stack depth(s) only
+python main.py hunl --config standard --stack 50 100 --iterations 50000
+```
+
+#### Per-Flop Solving
+
+Solve multiple flop textures independently and merge results:
+
+```bash
+# Solve all 25 flops in category 25 (flop-only for speed)
+python main.py hunl --config perflop --flops 25 --iterations 1000 --terminal-street flop
+
+# Solve 49 flops through the turn
+python main.py hunl --config perflop --flops 49 --iterations 500 --terminal-street turn
+
+# Available flop categories: 25, 49, 85, 184 (from config/flops.yaml)
+```
+
+**Terminal Street Options:**
+- `--terminal-street flop` - Showdown at flop (fastest, ~27s per flop)
+- `--terminal-street turn` - Showdown at turn (slower, larger tree)
+- `--terminal-street river` - Full game to river (slowest, may require simplified config)
+
+#### Postflop with Custom Board
+
+```bash
+# Interactive mode with custom board (prompted when entering flop)
+python main.py hunl --config standard --load strategy.gz
+
+# Specify board via CLI (for non-interactive use)
+python main.py hunl --config standard --load strategy.gz --board "AhKd2cJs8s"
 ```
 
 **Action Notation:**
@@ -163,6 +200,63 @@ print(f"SB facing 3-bet with 72o: {strategy['SB:72o:r2.5-r8']}")
 - `AK`, `T9` - Suited hands (no suffix)
 - `AKo`, `T9o` - Offsuit hands
 - `AcKh`, `AsAd` - Specific suits (optional)
+
+#### Per-Flop Solving
+
+```python
+from solver import Solver
+from games.hunl_preflop import HUNLPreflop, make_board_config
+from config import load_config, load_flops
+from dataclasses import replace
+
+# Load config and flops
+config = load_config("config/presets/perflop.yaml")
+flops = load_flops()[25]  # 25 flop textures
+
+# Solve each flop independently
+all_strategies = {}
+for flop in flops[:5]:  # First 5 flops
+    board = make_board_config(flop)  # Creates flop/turn/river board
+    game = HUNLPreflop(
+        replace(config, stack_depths=[25]),
+        preflop_only=False,
+        board=board,
+        terminal_street='flop'  # Showdown at flop for speed
+    )
+
+    solver = Solver(game, device="cpu", batch_size=512)
+    strategy = solver.solve(iterations=500, verbose=False)
+    all_strategies["".join(flop)] = strategy
+
+print(f"Solved {len(all_strategies)} flops")
+```
+
+#### Postflop Subgame Solving
+
+```python
+from solver import Solver
+from games.postflop_subgame import PostflopSubgame
+from config import load_config
+
+config = load_config("config/presets/standard.yaml")
+
+# Create postflop subgame starting from a specific pot/stack
+subgame = PostflopSubgame(
+    config=config,
+    starting_pot=14.0,      # Pot after preflop action
+    starting_stacks=(93.0, 93.0),  # Remaining stacks
+    starting_street="flop",
+    board={
+        "flop": ("Ah", "Kd", "2c"),
+        "turn": ("Ah", "Kd", "2c", "Js"),
+        "river": ("Ah", "Kd", "2c", "Js", "8s"),
+    }
+)
+
+solver = Solver(subgame, device="cpu", batch_size=512)
+strategy = solver.solve(iterations=1000, verbose=True)
+print(f"Postflop info sets: {len(strategy)}")
+```
 
 ### GPU Acceleration
 
@@ -247,7 +341,8 @@ poker_solver/
 ├── games/
 │   ├── base.py          # Abstract Game interface
 │   ├── kuhn.py          # Kuhn Poker implementation
-│   └── hunl_preflop.py  # HUNL Preflop implementation
+│   ├── hunl_preflop.py  # HUNL full game implementation
+│   └── postflop_subgame.py # Postflop subgame for on-demand solving
 ├── cfr/
 │   ├── vanilla.py       # CPU-based vanilla CFR
 │   └── batched.py       # GPU-accelerated batched CFR+
@@ -258,9 +353,11 @@ poker_solver/
 │   └── exploitability.py # Best response calculation
 ├── config/
 │   ├── loader.py        # YAML config loading
+│   ├── flops.yaml       # Flop configurations (25, 49, 85, 184 textures)
 │   └── presets/
 │       ├── standard.yaml # 100BB, standard sizes
-│       └── tiny.yaml     # 5BB, fast testing
+│       ├── tiny.yaml     # 5BB, fast testing
+│       └── perflop.yaml  # Simplified config for per-flop solving
 ├── cli/
 │   ├── interactive.py   # Strategy explorer loop
 │   ├── matrix.py        # 13x13 matrix rendering
@@ -286,6 +383,29 @@ pytest -m "" -v
 # Run specific test file
 pytest tests/test_nash_convergence.py -v
 ```
+
+## Configuration
+
+### Config File Options
+
+```yaml
+name: "Config Name"
+stack_depths: [25, 50, 100]    # Stack depths in BB
+raise_sizes: [2.5, 8, 20]      # Preflop raise sizes in BB
+max_bets_per_round: 4          # Max bets/raises per preflop round
+
+# Postflop settings (for tractable tree sizes)
+postflop_max_bets_per_round: 1 # Keep small (1-2) for tractability
+postflop_raise_sizes: [5, 10]  # Optional; if omitted, uses pot-relative sizing
+```
+
+### Preset Configs
+
+| Preset | Stack | Raise Sizes | Use Case |
+|--------|-------|-------------|----------|
+| `standard` | 100BB | 2.5, 8, 20, 100 | Full preflop solving |
+| `tiny` | 5-25BB | 2, 3, 7 | Quick testing |
+| `perflop` | 25BB | 2.5, 8 | Per-flop full game solving |
 
 ## Algorithm
 
