@@ -4,7 +4,7 @@ from collections import defaultdict
 
 import torch
 from torch import Tensor
-
+from tqdm import tqdm
 from games.base import Game
 
 
@@ -112,7 +112,6 @@ def compile_game(
     initial_states = list(game.initial_states())
 
     if verbose:
-        from tqdm import tqdm
         initial_states = tqdm(initial_states, desc="Enumerating states", unit="state")
 
     for initial_state in initial_states:
@@ -130,7 +129,11 @@ def compile_game(
     terminal_mask = torch.zeros(num_nodes, dtype=torch.bool, device=device)
     terminal_utils = torch.zeros(num_nodes, num_players, dtype=torch.float32, device=device)
 
-    for idx, node in enumerate(nodes):
+    node_iter = enumerate(nodes)
+    if verbose:
+        node_iter = tqdm(node_iter, total=num_nodes, desc="Building tensors", unit="node")
+
+    for idx, node in node_iter:
         node_player[idx] = node["player"]
         node_info_set[idx] = node["info_set"]
         node_num_actions[idx] = node["num_actions"]
