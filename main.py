@@ -168,6 +168,19 @@ def run_hunl(args):
         all_strategies = {}
         total_start_time = time.time()
 
+        # Check if we can reuse compiled game across stacks
+        # Trees are identical if all raises fit within all stacks
+        can_share_compilation = (
+            multi_stack and
+            args.batch_size > 1 and
+            max(config.raise_sizes) <= min(stack_depths)
+        )
+
+        shared_solver = None
+        if can_share_compilation and not args.quiet:
+            print("(Sharing game tree compilation across stacks)")
+            print()
+
         for i, stack_depth in enumerate(stack_depths):
             if multi_stack and not args.quiet:
                 print(f"[{i+1}/{len(stack_depths)}] Training {int(stack_depth) if stack_depth == int(stack_depth) else stack_depth}BB stack...")
@@ -178,13 +191,33 @@ def run_hunl(args):
 
             # Create game and solver
             game = HUNLPreflop(single_stack_config)
-            solver = Solver(
-                game=game,
-                device=args.device,
-                batch_size=args.batch_size,
-                verbose=not args.quiet,
-                max_memory_gb=args.max_memory,
-            )
+
+            if can_share_compilation:
+                if shared_solver is None:
+                    # First stack: compile with terminal state storage
+                    solver = Solver(
+                        game=game,
+                        device=args.device,
+                        batch_size=args.batch_size,
+                        verbose=not args.quiet,
+                        max_memory_gb=args.max_memory,
+                        store_terminal_states=True,
+                    )
+                    shared_solver = solver
+                else:
+                    # Subsequent stacks: reuse compiled game, update utilities
+                    solver = shared_solver
+                    solver.game = game  # Update game reference
+                    solver.update_utilities_for_stack(stack_depth, verbose=not args.quiet)
+                    solver.reset()
+            else:
+                solver = Solver(
+                    game=game,
+                    device=args.device,
+                    batch_size=args.batch_size,
+                    verbose=not args.quiet,
+                    max_memory_gb=args.max_memory,
+                )
 
             # Train
             start_time = time.time()

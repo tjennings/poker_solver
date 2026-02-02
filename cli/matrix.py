@@ -133,26 +133,34 @@ class ActionDistribution:
 
         Returns actions from strongest to weakest (left to right):
         all_in, raises (descending by size), call, fold.
-        Only includes actions with frequency > 0.
+
+        Actions below the minimum visible threshold are filtered out.
+        With CELL_WIDTH=5, each column is 20% of the cell. An action needs
+        at least 50% of a column (10%) to be visible, otherwise it's rounded
+        to zero.
         """
+        # Minimum frequency to display: 50% of one column width
+        # With CELL_WIDTH=5, each column is 20%, so threshold is 10%
+        min_threshold = 0.5 / CELL_WIDTH  # 0.10 for CELL_WIDTH=5
+
         segments = []
 
         # Strongest action first (leftmost)
-        if self.all_in > 0:
+        if self.all_in >= min_threshold:
             segments.append(("all_in", self.all_in))
 
         # Raises sorted by size descending (larger raises = more aggressive)
         if self.raises:
             sorted_raises = sorted(self.raises.items(), key=lambda x: x[0], reverse=True)
             for size, freq in sorted_raises:
-                if freq > 0:
+                if freq >= min_threshold:
                     segments.append((f"r{size}", freq))
 
-        if self.call > 0:
+        if self.call >= min_threshold:
             segments.append(("call", self.call))
 
         # Weakest action last (rightmost)
-        if self.fold > 0:
+        if self.fold >= min_threshold:
             segments.append(("fold", self.fold))
 
         return segments

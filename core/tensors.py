@@ -43,11 +43,15 @@ class CompiledGame:
 
     device: torch.device
 
+    # For multi-stack optimization: store terminal states for utility recomputation
+    terminal_states: List = None  # List of (node_idx, state) for terminal nodes
+
 
 def compile_game(
     game: Game,
     device: torch.device,
     verbose: bool = False,
+    store_terminal_states: bool = False,
 ) -> CompiledGame:
     """
     Compile game tree to tensor representation.
@@ -58,11 +62,13 @@ def compile_game(
         game: Game instance to compile
         device: Torch device for tensors
         verbose: Show progress bar during enumeration
+        store_terminal_states: If True, store terminal states for utility recomputation
     """
     nodes = []
     info_set_to_idx: Dict[str, int] = {}
     info_set_actions: Dict[str, List[str]] = {}
     depth_buckets: Dict[int, List[int]] = defaultdict(list)
+    terminal_states = [] if store_terminal_states else None
 
     def add_info_set(key: str) -> int:
         if key not in info_set_to_idx:
@@ -82,6 +88,8 @@ def compile_game(
                 "children": [],
                 "num_actions": 0,
             })
+            if store_terminal_states:
+                terminal_states.append((node_idx, state))
             return node_idx
 
         info_set = game.info_set_key(state)
@@ -199,4 +207,121 @@ def compile_game(
         max_actions=max_actions,
         num_players=num_players,
         device=device,
+        terminal_states=terminal_states,
     )
+
+
+def recompute_utilities(
+    compiled: CompiledGame,
+    game: Game,
+    new_stack: float,
+    verbose: bool = False,
+) -> None:
+    """
+    Recompute terminal utilities for a different stack depth.
+
+    This modifies the compiled game's terminal_utils tensor in-place.
+    Requires the CompiledGame to have been compiled with store_terminal_states=True.
+
+    Args:
+        compiled: CompiledGame with terminal_states stored
+        game: Game instance (used to access utility computation)
+        new_stack: New stack depth to use for utility computation
+        verbose: Show progress
+    """
+    if compiled.terminal_states is None:
+        raise ValueError("CompiledGame was not compiled with store_terminal_states=True")
+
+    if verbose:
+        print(f"Recomputing utilities for {new_stack}BB stack...", end=" ", flush=True)
+
+    # Build new utilities list
+    num_nodes = compiled.num_nodes
+    num_players = compiled.num_players
+    new_utils = [[0.0] * num_players for _ in range(num_nodes)]
+
+    for node_idx, state in compiled.terminal_states:
+        # Create a new state with the updated stack
+        # We need to reconstruct pot based on history with new stack
+        new_state = _recompute_state_with_stack(state, new_stack)
+        for p in range(num_players):
+            new_utils[node_idx][p] = game.utility(new_state, p)
+
+    # Update tensor
+    compiled.terminal_utils = torch.tensor(
+        new_utils, dtype=torch.float32, device=compiled.device
+    )
+
+    if verbose:
+        print("done")
+
+
+def _recompute_state_with_stack(state, new_stack: float):
+    """
+    Recompute a game state with a different stack depth.
+
+    This recalculates the pot based on the action history with the new stack.
+    """
+    # Import here to avoid circular imports
+    from games.hunl_preflop import HUNLState
+
+    # Recalculate pot with new stack
+    pot = 1.5  # Initial blinds
+    sb_committed = 0.5
+    bb_committed = 1.0
+
+    for i, action in enumerate(state.history):
+        acting_player = i % 2  # 0=SB, 1=BB
+
+        if action == "f":
+            pass  # Fold doesn't change pot
+        elif action == "c":
+            # Call - match current bet
+            current_bet = _get_bet_at_action(state.history, i, new_stack)
+            if acting_player == 0:
+                amount_to_add = current_bet - sb_committed
+                pot += amount_to_add
+                sb_committed = current_bet
+            else:
+                amount_to_add = current_bet - bb_committed
+                pot += amount_to_add
+                bb_committed = current_bet
+        elif action == "a":
+            # All-in with new stack
+            if acting_player == 0:
+                amount_to_add = new_stack - sb_committed
+                pot += amount_to_add
+                sb_committed = new_stack
+            else:
+                amount_to_add = new_stack - bb_committed
+                pot += amount_to_add
+                bb_committed = new_stack
+        elif action.startswith("r"):
+            raise_to = float(action[1:])
+            if acting_player == 0:
+                amount_to_add = raise_to - sb_committed
+                pot += amount_to_add
+                sb_committed = raise_to
+            else:
+                amount_to_add = raise_to - bb_committed
+                pot += amount_to_add
+                bb_committed = raise_to
+
+    return HUNLState(
+        hands=state.hands,
+        history=state.history,
+        stack=new_stack,
+        pot=pot,
+        to_act=state.to_act,
+    )
+
+
+def _get_bet_at_action(history: tuple, action_idx: int, stack: float) -> float:
+    """Get the bet amount at a specific action index."""
+    for i in range(action_idx - 1, -1, -1):
+        action = history[i]
+        if action.startswith("r"):
+            return float(action[1:])
+        elif action == "a":
+            return stack
+    return 1.0  # Default is BB

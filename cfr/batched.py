@@ -40,6 +40,12 @@ class BatchedCFR:
         # Pre-compute indices for vectorized operations
         self._precompute_indices()
 
+    def reset(self):
+        """Reset CFR state for a new training run (e.g., different stack depth)."""
+        self.regret_sum.zero_()
+        self.strategy_sum.zero_()
+        self.iterations = 0
+
     def _compute_safe_batch_size(self, requested_batch_size: int, max_memory_gb: float) -> int:
         """Compute a batch size that fits within memory limit."""
         num_nodes = self.compiled.num_nodes

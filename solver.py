@@ -7,7 +7,7 @@ from tqdm import tqdm
 from games.base import Game
 from cfr.vanilla import VanillaCFR
 from cfr.batched import BatchedCFR
-from core.tensors import compile_game
+from core.tensors import compile_game, recompute_utilities, CompiledGame
 from core.device import get_device
 from core.exploitability import compute_exploitability
 
@@ -29,6 +29,8 @@ class Solver:
         batch_size: int = 1,
         verbose: bool = False,
         max_memory_gb: float = 4.0,
+        compiled: Optional[CompiledGame] = None,
+        store_terminal_states: bool = False,
     ):
         """
         Initialize solver.
@@ -39,6 +41,8 @@ class Solver:
             batch_size: Number of parallel iterations (1 = vanilla CFR)
             verbose: Show progress during game tree compilation
             max_memory_gb: Maximum GPU memory to use (will reduce batch_size if needed)
+            compiled: Optional pre-compiled game (for multi-stack optimization)
+            store_terminal_states: If True, store states for utility recomputation
         """
         self.game = game
         self.batch_size = batch_size
@@ -50,7 +54,13 @@ class Solver:
         else:
             # Use batched GPU implementation
             self.device = get_device(device)
-            self.compiled = compile_game(game, self.device, verbose=verbose)
+            if compiled is not None:
+                self.compiled = compiled
+            else:
+                self.compiled = compile_game(
+                    game, self.device, verbose=verbose,
+                    store_terminal_states=store_terminal_states,
+                )
             self.engine = BatchedCFR(
                 self.compiled,
                 batch_size,
@@ -124,6 +134,31 @@ class Solver:
     def exploitability(self) -> float:
         """Compute exploitability of current strategy."""
         return compute_exploitability(self.game, self.get_strategy())
+
+    def reset(self) -> None:
+        """Reset CFR state for a new training run."""
+        if self.batched:
+            self.engine.reset()
+        else:
+            # For vanilla CFR, reinitialize
+            self.engine = VanillaCFR(self.game)
+
+    def update_utilities_for_stack(self, new_stack: float, verbose: bool = False) -> None:
+        """
+        Update terminal utilities for a different stack depth.
+
+        Only works for batched mode with store_terminal_states=True.
+
+        Args:
+            new_stack: New stack depth
+            verbose: Show progress
+        """
+        if not self.batched:
+            raise ValueError("update_utilities_for_stack only works in batched mode")
+        if self.compiled.terminal_states is None:
+            raise ValueError("CompiledGame was not compiled with store_terminal_states=True")
+
+        recompute_utilities(self.compiled, self.game, new_stack, verbose=verbose)
 
     def save_strategy(self, path: str, stack_depth: Optional[float] = None) -> None:
         """
