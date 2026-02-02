@@ -182,12 +182,12 @@ def get_bg_color_for_action(action: str, raise_sizes: Optional[List[float]] = No
     return BG_GRAY
 
 
-def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Optional[List[float]] = None) -> str:
+def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Optional[List[float]] = None) -> List[str]:
     """
     Render a single cell with frequency-based background segments.
 
     Each character position gets a background color based on the action
-    that "owns" that frequency range.
+    that "owns" that frequency range. Returns CELL_WIDTH rows for square cells.
 
     Args:
         hand: Hand name (e.g., "AA", "AKs", "72o")
@@ -195,20 +195,30 @@ def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Opti
         raise_sizes: List of configured raise sizes
 
     Returns:
-        ANSI-formatted string for the cell
+        List of ANSI-formatted strings, one per row of the cell
     """
-    # Pad hand to cell width
-    padded = f"{hand:<{CELL_WIDTH}}"
+    # Center hand name vertically (middle row shows the text)
+    middle_row = CELL_WIDTH // 2
+    padded_hand = f"{hand:^{CELL_WIDTH}}"  # Center the hand name
+    blank_row = " " * CELL_WIDTH
 
     if dist is None:
         # No strategy - gray background
-        return f"{BG_GRAY}{ANSI_WHITE_FG}{padded}{ANSI_RESET}"
+        rows = []
+        for row_idx in range(CELL_WIDTH):
+            text = padded_hand if row_idx == middle_row else blank_row
+            rows.append(f"{BG_GRAY}{ANSI_WHITE_FG}{text}{ANSI_RESET}")
+        return rows
 
     # Get action segments
     segments = dist.get_action_segments(raise_sizes)
 
     if not segments:
-        return f"{BG_GRAY}{ANSI_WHITE_FG}{padded}{ANSI_RESET}"
+        rows = []
+        for row_idx in range(CELL_WIDTH):
+            text = padded_hand if row_idx == middle_row else blank_row
+            rows.append(f"{BG_GRAY}{ANSI_WHITE_FG}{text}{ANSI_RESET}")
+        return rows
 
     # Build cumulative frequency ranges
     cumulative = []
@@ -217,30 +227,32 @@ def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Opti
         cumulative.append((action, total, total + freq))
         total += freq
 
-    # For each character position, find which action owns it
-    result = []
+    # Pre-compute background color for each column position
+    column_colors = []
     for i in range(CELL_WIDTH):
-        # Position covers range [i/CELL_WIDTH, (i+1)/CELL_WIDTH]
-        # Use midpoint to determine owner
         midpoint = (i + 0.5) / CELL_WIDTH
-
-        # Scale midpoint to total frequency (should be ~1.0)
         scaled_pos = midpoint * total if total > 0 else 0
 
-        # Find which action owns this position
         bg_color = BG_GRAY
         for action, start, end in cumulative:
             if start <= scaled_pos < end:
                 bg_color = get_bg_color_for_action(action, raise_sizes)
                 break
         else:
-            # If past all segments, use last action's color
             if cumulative:
                 bg_color = get_bg_color_for_action(cumulative[-1][0], raise_sizes)
+        column_colors.append(bg_color)
 
-        result.append(f"{bg_color}{ANSI_WHITE_FG}{padded[i]}")
+    # Generate each row of the cell
+    rows = []
+    for row_idx in range(CELL_WIDTH):
+        text = padded_hand if row_idx == middle_row else blank_row
+        row_chars = []
+        for i in range(CELL_WIDTH):
+            row_chars.append(f"{column_colors[i]}{ANSI_WHITE_FG}{text[i]}")
+        rows.append("".join(row_chars) + ANSI_RESET)
 
-    return "".join(result) + ANSI_RESET
+    return rows
 
 
 def get_color_for_action(
@@ -327,6 +339,8 @@ def render_matrix(
     """
     Render a 13x13 strategy matrix with color-coded cells and legend.
 
+    Each cell is CELL_WIDTH x CELL_WIDTH characters (square cells).
+
     Args:
         strategy: Dictionary mapping hand names to ActionDistribution
         header: Header text to display above the matrix
@@ -343,26 +357,34 @@ def render_matrix(
     matrix_lines.append(header)
     matrix_lines.append("")
 
-    # Render each row of the matrix
-    for row_idx, row in enumerate(layout):
-        row_cells: List[str] = []
+    # Track which legend line to add next
+    legend_idx = 0
+    matrix_width = CELL_WIDTH * 13  # 13 columns of cells
+
+    # Render each row of the matrix (each hand row spans CELL_WIDTH terminal lines)
+    for row in layout:
+        # Render all cells for this row (each returns CELL_WIDTH lines)
+        cell_rows: List[List[str]] = []
         for hand in row:
-            # Get the action distribution for this hand
             dist = strategy.get(hand)
-            # Render cell with frequency-segmented background
-            cell = render_cell(hand, dist, raise_sizes)
-            row_cells.append(cell)
+            cell_lines = render_cell(hand, dist, raise_sizes)
+            cell_rows.append(cell_lines)
 
-        # Combine row with legend (if legend line exists for this row)
-        row_str = "".join(row_cells)
-        if row_idx < len(legend_lines):
-            row_str += legend_lines[row_idx]
+        # Combine cells horizontally for each terminal line
+        for line_idx in range(CELL_WIDTH):
+            row_str = "".join(cell[line_idx] for cell in cell_rows)
 
-        matrix_lines.append(row_str)
+            # Add legend line if available (on middle line of cell for alignment)
+            if line_idx == CELL_WIDTH // 2 and legend_idx < len(legend_lines):
+                row_str += legend_lines[legend_idx]
+                legend_idx += 1
+
+            matrix_lines.append(row_str)
 
     # Add any remaining legend lines
-    for i in range(len(layout), len(legend_lines)):
-        matrix_lines.append(" " * 52 + legend_lines[i])
+    while legend_idx < len(legend_lines):
+        matrix_lines.append(" " * matrix_width + legend_lines[legend_idx])
+        legend_idx += 1
 
     return "\n".join(matrix_lines)
 
