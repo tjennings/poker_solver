@@ -314,35 +314,56 @@ class TestHUNLPreflopUtility:
         assert game.utility(state, 1) == -1.0  # BB loses their 1BB
 
     def test_utility_call_showdown_sb_wins(self, game):
-        """At showdown, higher hand wins."""
-        # SB has AA (index 0), BB has KK (index 1) - AA wins
+        """At showdown, utility is equity-weighted expected value."""
+        # SB has AA (index 0), BB has KK (index 1)
+        # AA vs KK equity is ~80.5%
         state = HUNLState(hands=(0, 1), history=("r3", "c"), stack=100, pot=6.0, to_act=0)
         # SB put in 3BB, BB put in 3BB
-        # SB wins 3BB (BB's contribution)
-        assert game.utility(state, 0) == 3.0
-        assert game.utility(state, 1) == -3.0
+        # EV = equity * pot - committed
+        sb_util = game.utility(state, 0)
+        bb_util = game.utility(state, 1)
+        # AA is favorite, should have positive EV
+        assert sb_util > 0
+        # Utilities should sum to zero (zero-sum game)
+        assert abs(sb_util + bb_util) < 0.01
 
     def test_utility_call_showdown_bb_wins(self, game):
-        """At showdown, higher hand wins."""
-        # SB has KK (index 1), BB has AA (index 0) - AA wins
+        """At showdown, utility is equity-weighted expected value."""
+        # SB has KK (index 1), BB has AA (index 0)
         state = HUNLState(hands=(1, 0), history=("r3", "c"), stack=100, pot=6.0, to_act=0)
-        assert game.utility(state, 0) == -3.0  # SB loses
-        assert game.utility(state, 1) == 3.0   # BB wins
+        sb_util = game.utility(state, 0)
+        bb_util = game.utility(state, 1)
+        # KK is underdog, SB should have negative EV
+        assert sb_util < 0
+        # BB (AA) should have positive EV
+        assert bb_util > 0
+        # Utilities should sum to zero
+        assert abs(sb_util + bb_util) < 0.01
 
     def test_utility_limp_check(self, game):
-        """Limp-check pot goes to showdown."""
-        # SB has AA, BB has KK - AA wins
+        """Limp-check pot goes to equity-weighted showdown."""
+        # SB has AA, BB has KK
         state = HUNLState(hands=(0, 1), history=("c", "c"), stack=100, pot=2.0, to_act=0)
-        # Each put in 1BB, winner gets 1BB
-        assert game.utility(state, 0) == 1.0   # AA wins
-        assert game.utility(state, 1) == -1.0  # KK loses
+        sb_util = game.utility(state, 0)
+        bb_util = game.utility(state, 1)
+        # AA is favorite
+        assert sb_util > 0
+        assert bb_util < 0
+        # Utilities should sum to zero
+        assert abs(sb_util + bb_util) < 0.01
 
     def test_utility_all_in_call(self, game):
-        """All-in call showdown."""
-        # SB shoves 100BB, BB calls with better hand
+        """All-in call uses equity-weighted showdown."""
+        # SB has KK (index 1), BB has AA (index 0)
         state = HUNLState(hands=(1, 0), history=("a", "c"), stack=100, pot=200.0, to_act=0)
-        assert game.utility(state, 0) == -100.0  # SB loses stack
-        assert game.utility(state, 1) == 100.0   # BB wins stack
+        sb_util = game.utility(state, 0)
+        bb_util = game.utility(state, 1)
+        # KK is underdog, SB has negative EV
+        assert sb_util < 0
+        # AA is favorite, BB has positive EV
+        assert bb_util > 0
+        # Utilities should sum to zero
+        assert abs(sb_util + bb_util) < 0.01
 
     def test_utility_non_terminal_raises(self, game):
         """Utility should raise for non-terminal state."""

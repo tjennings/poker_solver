@@ -9,6 +9,7 @@ from typing import Tuple, List
 
 from config.loader import Config
 from core.hands import hand_to_string, HAND_COUNT
+from core.equity import get_preflop_equity
 from games.base import Game
 
 
@@ -215,23 +216,22 @@ class HUNLPreflop(Game):
                 # Return the win (what the other player put in)
                 return sb_committed if folder == 0 else bb_committed
         else:
-            # Showdown - compare hands
-            # Lower index = better hand (0=AA, 1=KK, etc.)
+            # Showdown - use preflop equity for expected value
             sb_hand = state.hands[0]
             bb_hand = state.hands[1]
 
-            # Lower index wins
-            if sb_hand < bb_hand:
-                winner = 0
-            else:
-                winner = 1
+            # Get equity for SB's hand vs BB's hand
+            sb_equity = get_preflop_equity(sb_hand, bb_hand)
+            bb_equity = 1.0 - sb_equity
 
-            if player == winner:
-                # Winner gets opponent's contribution
-                return bb_committed if winner == 0 else sb_committed
-            else:
-                # Loser loses their contribution
-                return -sb_committed if player == 0 else -bb_committed
+            # Total pot
+            pot = sb_committed + bb_committed
+
+            # Expected value = equity * pot - amount_committed
+            if player == 0:  # SB
+                return sb_equity * pot - sb_committed
+            else:  # BB
+                return bb_equity * pot - bb_committed
 
     def info_set_key(self, state: HUNLState) -> str:
         """
