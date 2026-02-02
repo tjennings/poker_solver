@@ -116,33 +116,47 @@ def compile_game(
 
     for initial_state in initial_states:
         enumerate_tree(initial_state, depth=0)
-    # Convert to tensors
+    # Convert to tensors (batch all data first for speed)
     num_nodes = len(nodes)
     num_players = game.num_players()
     max_actions = max(n["num_actions"] for n in nodes if not n["terminal"]) if nodes else 2
 
-    node_player = torch.zeros(num_nodes, dtype=torch.long, device=device)
-    node_info_set = torch.zeros(num_nodes, dtype=torch.long, device=device)
-    node_num_actions = torch.zeros(num_nodes, dtype=torch.long, device=device)
-    action_child = torch.zeros(num_nodes, max_actions, dtype=torch.long, device=device)
-    action_mask = torch.zeros(num_nodes, max_actions, dtype=torch.bool, device=device)
-    terminal_mask = torch.zeros(num_nodes, dtype=torch.bool, device=device)
-    terminal_utils = torch.zeros(num_nodes, num_players, dtype=torch.float32, device=device)
-
-    node_iter = enumerate(nodes)
     if verbose:
-        node_iter = tqdm(node_iter, total=num_nodes, desc="Building tensors", unit="node")
+        print("Building tensors...", end=" ", flush=True)
 
-    for idx, node in node_iter:
-        node_player[idx] = node["player"]
-        node_info_set[idx] = node["info_set"]
-        node_num_actions[idx] = node["num_actions"]
-        terminal_mask[idx] = node["terminal"]
-        terminal_utils[idx] = torch.tensor(node["utils"], dtype=torch.float32)
+    # Collect all data into lists first (much faster than per-element tensor assignment)
+    player_list = []
+    info_set_list = []
+    num_actions_list = []
+    terminal_list = []
+    utils_list = []
+    child_list = []  # Will be flattened [num_nodes, max_actions]
+    mask_list = []   # Will be flattened [num_nodes, max_actions]
 
-        for a_idx, child_idx in enumerate(node["children"]):
-            action_child[idx, a_idx] = child_idx
-            action_mask[idx, a_idx] = True
+    for node in nodes:
+        player_list.append(node["player"])
+        info_set_list.append(node["info_set"])
+        num_actions_list.append(node["num_actions"])
+        terminal_list.append(node["terminal"])
+        utils_list.append(node["utils"])
+
+        # Pad children to max_actions
+        children = node["children"]
+        padded_children = children + [0] * (max_actions - len(children))
+        child_list.append(padded_children)
+        mask_list.append([True] * len(children) + [False] * (max_actions - len(children)))
+
+    # Create tensors in one shot (fast)
+    node_player = torch.tensor(player_list, dtype=torch.long, device=device)
+    node_info_set = torch.tensor(info_set_list, dtype=torch.long, device=device)
+    node_num_actions = torch.tensor(num_actions_list, dtype=torch.long, device=device)
+    terminal_mask = torch.tensor(terminal_list, dtype=torch.bool, device=device)
+    terminal_utils = torch.tensor(utils_list, dtype=torch.float32, device=device)
+    action_child = torch.tensor(child_list, dtype=torch.long, device=device)
+    action_mask = torch.tensor(mask_list, dtype=torch.bool, device=device)
+
+    if verbose:
+        print(f"done ({num_nodes:,} nodes)")
 
     # Build depth slices
     max_depth = max(depth_buckets.keys()) + 1 if depth_buckets else 0
