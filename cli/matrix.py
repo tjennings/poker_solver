@@ -17,6 +17,7 @@ ANSI_RESET = "\033[0m"
 ANSI_WHITE_FG = "\033[97m"  # Bright white foreground
 
 # Background colors (256-color mode)
+BG_BLACK = "\033[48;5;16m"     # Black for cell borders
 BG_BLUE = "\033[48;5;24m"      # Blue for fold
 BG_GREEN = "\033[48;5;22m"     # Green for call
 BG_LIGHT_RED = "\033[48;5;124m"   # Light red for small raises
@@ -186,8 +187,9 @@ def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Opti
     """
     Render a single cell with frequency-based background segments.
 
-    Each character position gets a background color based on the action
-    that "owns" that frequency range. Returns CELL_WIDTH rows for square cells.
+    Each cell has a 1px black border. The hand name appears in the upper-left
+    corner inside the border. The content area shows action frequencies as
+    colored segments.
 
     Args:
         hand: Hand name (e.g., "AA", "AKs", "72o")
@@ -197,60 +199,67 @@ def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Opti
     Returns:
         List of ANSI-formatted strings, one per row of the cell
     """
-    # Center hand name vertically (middle row shows the text)
-    middle_row = CELL_WIDTH // 2
-    padded_hand = f"{hand:^{CELL_WIDTH}}"  # Center the hand name
-    blank_row = " " * CELL_WIDTH
+    # Cell structure: 1px border on all sides
+    # Content area is (CELL_WIDTH - 2) x (CELL_WIDTH - 2)
+    content_width = CELL_WIDTH - 2
 
-    if dist is None:
-        # No strategy - gray background
-        rows = []
-        for row_idx in range(CELL_WIDTH):
-            text = padded_hand if row_idx == middle_row else blank_row
-            rows.append(f"{BG_GRAY}{ANSI_WHITE_FG}{text}{ANSI_RESET}")
-        return rows
+    # Hand name goes in upper-left of content (row 1, starting at col 1)
+    # Pad hand to content width for the label row
+    padded_hand = f"{hand:<{content_width}}"
+    blank_content = " " * content_width
 
-    # Get action segments
-    segments = dist.get_action_segments(raise_sizes)
+    # Create border row (all black)
+    border_row = f"{BG_BLACK}{ANSI_WHITE_FG}{' ' * CELL_WIDTH}{ANSI_RESET}"
 
-    if not segments:
-        rows = []
-        for row_idx in range(CELL_WIDTH):
-            text = padded_hand if row_idx == middle_row else blank_row
-            rows.append(f"{BG_GRAY}{ANSI_WHITE_FG}{text}{ANSI_RESET}")
-        return rows
+    def make_content_row(text: str, column_colors: List[str]) -> str:
+        """Build a row with black border on left/right and colored content."""
+        chars = [f"{BG_BLACK}{ANSI_WHITE_FG} "]  # Left border
+        for i in range(content_width):
+            chars.append(f"{column_colors[i]}{ANSI_WHITE_FG}{text[i]}")
+        chars.append(f"{BG_BLACK}{ANSI_WHITE_FG} {ANSI_RESET}")  # Right border
+        return "".join(chars)
 
-    # Build cumulative frequency ranges
-    cumulative = []
-    total = 0.0
-    for action, freq in segments:
-        cumulative.append((action, total, total + freq))
-        total += freq
+    # Determine content colors
+    if dist is None or not dist.get_action_segments(raise_sizes):
+        # No strategy - gray background for content
+        content_colors = [BG_GRAY] * content_width
+    else:
+        # Build cumulative frequency ranges
+        segments = dist.get_action_segments(raise_sizes)
+        cumulative = []
+        total = 0.0
+        for action, freq in segments:
+            cumulative.append((action, total, total + freq))
+            total += freq
 
-    # Pre-compute background color for each column position
-    column_colors = []
-    for i in range(CELL_WIDTH):
-        midpoint = (i + 0.5) / CELL_WIDTH
-        scaled_pos = midpoint * total if total > 0 else 0
+        # Pre-compute background color for each content column
+        content_colors = []
+        for i in range(content_width):
+            midpoint = (i + 0.5) / content_width
+            scaled_pos = midpoint * total if total > 0 else 0
 
-        bg_color = BG_GRAY
-        for action, start, end in cumulative:
-            if start <= scaled_pos < end:
-                bg_color = get_bg_color_for_action(action, raise_sizes)
-                break
-        else:
-            if cumulative:
-                bg_color = get_bg_color_for_action(cumulative[-1][0], raise_sizes)
-        column_colors.append(bg_color)
+            bg_color = BG_GRAY
+            for action, start, end in cumulative:
+                if start <= scaled_pos < end:
+                    bg_color = get_bg_color_for_action(action, raise_sizes)
+                    break
+            else:
+                if cumulative:
+                    bg_color = get_bg_color_for_action(cumulative[-1][0], raise_sizes)
+            content_colors.append(bg_color)
 
-    # Generate each row of the cell
+    # Generate rows
     rows = []
     for row_idx in range(CELL_WIDTH):
-        text = padded_hand if row_idx == middle_row else blank_row
-        row_chars = []
-        for i in range(CELL_WIDTH):
-            row_chars.append(f"{column_colors[i]}{ANSI_WHITE_FG}{text[i]}")
-        rows.append("".join(row_chars) + ANSI_RESET)
+        if row_idx == 0 or row_idx == CELL_WIDTH - 1:
+            # Top or bottom border
+            rows.append(border_row)
+        elif row_idx == 1:
+            # Hand name row (upper-left)
+            rows.append(make_content_row(padded_hand, content_colors))
+        else:
+            # Content rows (blank text, colored background)
+            rows.append(make_content_row(blank_content, content_colors))
 
     return rows
 
