@@ -106,49 +106,76 @@ def run_hunl(args):
             print(f"Error parsing action sequence: {e}", file=sys.stderr)
             sys.exit(1)
 
-    if not args.quiet:
-        print("=" * 50)
-        print("CFR Poker Solver - HUNL Preflop")
-        print("=" * 50)
-        print(f"Config: {config.name}")
-        print(f"Stack depth: {config.stack_depth} BB")
-        print(f"Raise sizes: {config.raise_sizes}")
-        print(f"Iterations: {args.iterations}")
-        print(f"Device: {args.device}")
-        print(f"Batch size: {args.batch_size}")
-        if initial_actions:
-            print(f"Initial actions: {' -> '.join(initial_actions)}")
-        print()
+    # Load pre-trained strategy or train new one
+    if args.load:
+        if not args.quiet:
+            print("=" * 50)
+            print("CFR Poker Solver - HUNL Preflop")
+            print("=" * 50)
+            print(f"Loading strategy from: {args.load}")
 
-    # Create game and solver
-    game = HUNLPreflop(config)
-    solver = Solver(
-        game=game,
-        device=args.device,
-        batch_size=args.batch_size,
-        verbose=not args.quiet,
-    )
+        try:
+            strategy = Solver.load_strategy(args.load)
+            if not args.quiet:
+                print(f"Loaded {len(strategy):,} information sets")
+                print()
+        except FileNotFoundError:
+            print(f"Error: Strategy file not found: {args.load}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error loading strategy: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        if not args.quiet:
+            print("=" * 50)
+            print("CFR Poker Solver - HUNL Preflop")
+            print("=" * 50)
+            print(f"Config: {config.name}")
+            print(f"Stack depth: {config.stack_depth} BB")
+            print(f"Raise sizes: {config.raise_sizes}")
+            print(f"Iterations: {args.iterations}")
+            print(f"Device: {args.device}")
+            print(f"Batch size: {args.batch_size}")
+            if initial_actions:
+                print(f"Initial actions: {' -> '.join(initial_actions)}")
+            print()
 
-    # Train
-    if not args.quiet:
-        print("Training CFR+...")
-    start_time = time.time()
-    strategy = solver.solve(
-        iterations=args.iterations,
-        verbose=not args.quiet,
-    )
-    elapsed = time.time() - start_time
+        # Create game and solver
+        game = HUNLPreflop(config)
+        solver = Solver(
+            game=game,
+            device=args.device,
+            batch_size=args.batch_size,
+            verbose=not args.quiet,
+        )
 
-    # Results
-    if not args.quiet:
-        print()
-        print("=" * 50)
-        print("Results")
-        print("=" * 50)
-        print(f"Time: {elapsed:.2f} seconds")
-        print(f"Iterations/sec: {args.iterations / elapsed:.0f}")
-        print(f"Final exploitability: {solver.exploitability():.6f}")
-        print()
+        # Train
+        start_time = time.time()
+        strategy = solver.solve(
+            iterations=args.iterations,
+            verbose=not args.quiet,
+        )
+        elapsed = time.time() - start_time
+
+        # Results
+        if not args.quiet:
+            print()
+            print("=" * 50)
+            print("Results")
+            print("=" * 50)
+            print(f"Time: {elapsed:.2f} seconds")
+            print(f"Iterations/sec: {args.iterations / elapsed:.0f}")
+            print(f"Final exploitability: {solver.exploitability():.6f}")
+            print()
+
+        # Save strategy if requested
+        if args.save:
+            solver.save_strategy(args.save)
+            if not args.quiet:
+                import os
+                size_mb = os.path.getsize(args.save) / (1024 * 1024)
+                print(f"Strategy saved to: {args.save} ({size_mb:.1f} MB)")
+                print()
 
     # Build interactive-compatible strategy (grouped by hand)
     # The raw strategy is keyed by info_set_key "POSITION:HAND:HISTORY"
@@ -301,6 +328,18 @@ def add_hunl_args(parser):
         "--no-interactive",
         action="store_true",
         help="Skip interactive mode after training"
+    )
+    parser.add_argument(
+        "--save", "-s",
+        type=str,
+        metavar="FILE",
+        help="Save trained strategy to file (recommended: .strategy.gz)"
+    )
+    parser.add_argument(
+        "--load", "-l",
+        type=str,
+        metavar="FILE",
+        help="Load pre-trained strategy from file (skips training)"
     )
 
 

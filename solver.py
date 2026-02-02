@@ -1,4 +1,8 @@
 from typing import Dict, Optional
+import gzip
+import pickle
+
+from tqdm import tqdm
 
 from games.base import Game
 from cfr.vanilla import VanillaCFR
@@ -52,38 +56,53 @@ class Solver:
         self,
         iterations: int,
         verbose: bool = True,
-        log_interval: int = 1000,
     ) -> Dict[str, Dict[str, float]]:
         """
         Run CFR for specified iterations.
 
         Args:
             iterations: Number of CFR iterations
-            verbose: Print progress updates
-            log_interval: How often to print (if verbose)
+            verbose: Print progress updates with progress bar
 
         Returns:
             Average strategy for all information sets
         """
         if self.batched:
             steps = max(1, iterations // self.batch_size)
-            for step in range(steps):
+            step_iter = range(steps)
+
+            if verbose:
+                step_iter = tqdm(
+                    step_iter,
+                    desc="Training CFR+",
+                    unit="step",
+                    total=steps,
+                )
+
+            for step in step_iter:
                 self.engine.train_step()
 
-                if verbose and (step + 1) % max(1, log_interval // self.batch_size) == 0:
-                    current_iter = (step + 1) * self.batch_size
+                # Update progress bar with exploitability periodically
+                if verbose and (step + 1) % max(1, steps // 10) == 0:
                     exploit = self.exploitability()
-                    print(f"Iteration {current_iter}: exploitability = {exploit:.6f}")
+                    step_iter.set_postfix({"exploit": f"{exploit:.4f}"})
         else:
+            iter_range = range(iterations)
+
             if verbose:
-                # Train in chunks for progress updates
-                chunk_size = log_interval
-                for i in range(0, iterations, chunk_size):
-                    self.engine.train(min(chunk_size, iterations - i))
+                iter_range = tqdm(
+                    iter_range,
+                    desc="Training CFR",
+                    unit="iter",
+                )
+
+            for i in iter_range:
+                self.engine.train(1)
+
+                # Update progress bar with exploitability periodically
+                if verbose and (i + 1) % max(1, iterations // 10) == 0:
                     exploit = self.exploitability()
-                    print(f"Iteration {i + chunk_size}: exploitability = {exploit:.6f}")
-            else:
-                self.engine.train(iterations)
+                    iter_range.set_postfix({"exploit": f"{exploit:.4f}"})
 
         return self.get_strategy()
 
@@ -97,3 +116,28 @@ class Solver:
     def exploitability(self) -> float:
         """Compute exploitability of current strategy."""
         return compute_exploitability(self.game, self.get_strategy())
+
+    def save_strategy(self, path: str) -> None:
+        """
+        Save strategy to compressed file.
+
+        Args:
+            path: File path (recommended: .strategy.gz extension)
+        """
+        strategy = self.get_strategy()
+        with gzip.open(path, "wb", compresslevel=6) as f:
+            pickle.dump(strategy, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    @staticmethod
+    def load_strategy(path: str) -> Dict[str, Dict[str, float]]:
+        """
+        Load strategy from compressed file.
+
+        Args:
+            path: File path to load from
+
+        Returns:
+            Strategy dictionary
+        """
+        with gzip.open(path, "rb") as f:
+            return pickle.load(f)
