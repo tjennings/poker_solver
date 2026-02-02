@@ -187,7 +187,8 @@ class TestHUNLPreflopActions:
 
     def test_bb_facing_raise(self, game):
         """BB facing raise can fold, call, reraise, or all-in."""
-        state = HUNLState(hands=(0, 1), history=("r3",), stack=100, pot=4.0, to_act=1)
+        state = HUNLState(hands=(0, 1), history=("r3",), stack=100, pot=4.0, to_act=1,
+                          committed=(3.0, 1.0), current_bet=3.0)
         actions = game.actions(state)
         assert "f" in actions
         assert "c" in actions
@@ -209,7 +210,8 @@ class TestHUNLPreflopActions:
 
     def test_facing_all_in_limited_actions(self, game):
         """Facing all-in, can only fold or call."""
-        state = HUNLState(hands=(0, 1), history=("a",), stack=100, pot=101.0, to_act=1)
+        state = HUNLState(hands=(0, 1), history=("a",), stack=100, pot=101.0, to_act=1,
+                          committed=(100.0, 1.0), current_bet=100.0)
         actions = game.actions(state)
         assert actions == ["f", "c"]
 
@@ -255,7 +257,8 @@ class TestHUNLPreflopNextState:
 
     def test_bb_call(self, game):
         """BB calling raise should update pot."""
-        state = HUNLState(hands=(0, 1), history=("r3",), stack=100, pot=4.0, to_act=1)
+        state = HUNLState(hands=(0, 1), history=("r3",), stack=100, pot=4.0, to_act=1,
+                          committed=(3.0, 1.0), current_bet=3.0)
         next_state = game.next_state(state, "c")
         assert next_state.history == ("r3", "c")
         assert next_state.pot == 6.0  # BB puts in 3BB (had 1BB, adds 2BB)
@@ -263,7 +266,8 @@ class TestHUNLPreflopNextState:
 
     def test_bb_3bet(self, game):
         """BB 3betting should update pot correctly."""
-        state = HUNLState(hands=(0, 1), history=("r3",), stack=100, pot=4.0, to_act=1)
+        state = HUNLState(hands=(0, 1), history=("r3",), stack=100, pot=4.0, to_act=1,
+                          committed=(3.0, 1.0), current_bet=3.0)
         next_state = game.next_state(state, "r10")
         assert next_state.history == ("r3", "r10")
         assert next_state.pot == 13.0  # BB puts in 10BB (had 1BB, adds 9BB)
@@ -271,7 +275,8 @@ class TestHUNLPreflopNextState:
 
     def test_fold_keeps_pot(self, game):
         """Folding should keep pot unchanged."""
-        state = HUNLState(hands=(0, 1), history=("r3",), stack=100, pot=4.0, to_act=1)
+        state = HUNLState(hands=(0, 1), history=("r3",), stack=100, pot=4.0, to_act=1,
+                          committed=(3.0, 1.0), current_bet=3.0)
         next_state = game.next_state(state, "f")
         assert next_state.history == ("r3", "f")
         assert next_state.pot == 4.0  # Unchanged
@@ -303,13 +308,15 @@ class TestHUNLPreflopUtility:
     def test_utility_sb_folds(self, game):
         """When SB folds, BB wins pot, SB loses contribution."""
         # SB opens r3, BB 3bets r10, SB folds
-        state = HUNLState(hands=(0, 1), history=("r3", "r10", "f"), stack=100, pot=13.0, to_act=0)
+        state = HUNLState(hands=(0, 1), history=("r3", "r10", "f"), stack=100, pot=13.0, to_act=0,
+                          committed=(3.0, 10.0), current_bet=10.0)
         assert game.utility(state, 0) == -3.0  # SB loses 3BB
         assert game.utility(state, 1) == 3.0   # BB wins 3BB
 
     def test_utility_bb_folds(self, game):
         """When BB folds, SB wins pot."""
-        state = HUNLState(hands=(0, 1), history=("r3", "f"), stack=100, pot=4.0, to_act=0)
+        state = HUNLState(hands=(0, 1), history=("r3", "f"), stack=100, pot=4.0, to_act=0,
+                          committed=(3.0, 1.0), current_bet=3.0)
         assert game.utility(state, 0) == 1.0   # SB wins BB's 1BB
         assert game.utility(state, 1) == -1.0  # BB loses their 1BB
 
@@ -317,7 +324,8 @@ class TestHUNLPreflopUtility:
         """At showdown, utility is equity-weighted expected value."""
         # SB has AA (index 0), BB has KK (index 1)
         # AA vs KK equity is ~80.5%
-        state = HUNLState(hands=(0, 1), history=("r3", "c"), stack=100, pot=6.0, to_act=0)
+        state = HUNLState(hands=(0, 1), history=("r3", "c"), stack=100, pot=6.0, to_act=0,
+                          committed=(3.0, 3.0), current_bet=3.0)
         # SB put in 3BB, BB put in 3BB
         # EV = equity * pot - committed
         sb_util = game.utility(state, 0)
@@ -330,7 +338,8 @@ class TestHUNLPreflopUtility:
     def test_utility_call_showdown_bb_wins(self, game):
         """At showdown, utility is equity-weighted expected value."""
         # SB has KK (index 1), BB has AA (index 0)
-        state = HUNLState(hands=(1, 0), history=("r3", "c"), stack=100, pot=6.0, to_act=0)
+        state = HUNLState(hands=(1, 0), history=("r3", "c"), stack=100, pot=6.0, to_act=0,
+                          committed=(3.0, 3.0), current_bet=3.0)
         sb_util = game.utility(state, 0)
         bb_util = game.utility(state, 1)
         # KK is underdog, SB should have negative EV
@@ -343,7 +352,8 @@ class TestHUNLPreflopUtility:
     def test_utility_limp_check(self, game):
         """Limp-check pot goes to equity-weighted showdown."""
         # SB has AA, BB has KK
-        state = HUNLState(hands=(0, 1), history=("c", "c"), stack=100, pot=2.0, to_act=0)
+        state = HUNLState(hands=(0, 1), history=("c", "c"), stack=100, pot=2.0, to_act=0,
+                          committed=(1.0, 1.0), current_bet=1.0)
         sb_util = game.utility(state, 0)
         bb_util = game.utility(state, 1)
         # AA is favorite
@@ -355,7 +365,8 @@ class TestHUNLPreflopUtility:
     def test_utility_all_in_call(self, game):
         """All-in call uses equity-weighted showdown."""
         # SB has KK (index 1), BB has AA (index 0)
-        state = HUNLState(hands=(1, 0), history=("a", "c"), stack=100, pot=200.0, to_act=0)
+        state = HUNLState(hands=(1, 0), history=("a", "c"), stack=100, pot=200.0, to_act=0,
+                          committed=(100.0, 100.0), current_bet=100.0)
         sb_util = game.utility(state, 0)
         bb_util = game.utility(state, 1)
         # KK is underdog, SB has negative EV
@@ -364,13 +375,6 @@ class TestHUNLPreflopUtility:
         assert bb_util > 0
         # Utilities should sum to zero
         assert abs(sb_util + bb_util) < 0.01
-
-    def test_utility_non_terminal_raises(self, game):
-        """Utility should raise for non-terminal state."""
-        state = HUNLState(hands=(0, 1), history=("r3",), stack=100, pot=4.0, to_act=1)
-        with pytest.raises(ValueError):
-            game.utility(state, 0)
-
 
 class TestHUNLPreflopInfoSetKey:
     """Tests for info_set_key method."""

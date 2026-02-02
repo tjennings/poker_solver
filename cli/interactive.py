@@ -63,7 +63,7 @@ class InteractiveSession:
         board: Current board cards as tuple of strings
     """
 
-    def __init__(self, config: Config, raw_strategy: Dict):
+    def __init__(self, config: Config, raw_strategy: Dict, preflop_only: bool = False):
         """Initialize an interactive session.
 
         Args:
@@ -71,8 +71,10 @@ class InteractiveSession:
             raw_strategy: Full strategy dictionary from solver with keys like
                 "SB:AA::r2.5-r8" mapping to action probabilities.
                 Can be flat format or nested {stack: {info_set: probs}} format.
+            preflop_only: If True, terminal states are preflop-only (no post-flop streets)
         """
         self.config = config
+        self.preflop_only = preflop_only
         self.history: List[str] = []
         self.street: str = "preflop"
         self.board: Tuple[str, ...] = ()
@@ -148,7 +150,8 @@ class InteractiveSession:
         self.history.append(action)
 
         # Check for street transition (only on call/check, not fold)
-        if action != "f" and self._betting_complete() and self.street != "river":
+        # Skip street advancement in preflop-only mode
+        if not self.preflop_only and action != "f" and self._betting_complete() and self.street != "river":
             self._advance_street()
 
     def _get_current_player_idx(self) -> int:
@@ -323,7 +326,7 @@ class InteractiveSession:
         """Check if current state is terminal.
 
         Returns:
-            True if the game has ended (fold or showdown on river)
+            True if the game has ended (fold or showdown)
         """
         if not self.history:
             return False
@@ -334,7 +337,11 @@ class InteractiveSession:
         if last_action == "f":
             return True
 
-        # Showdown: betting complete on river
+        # Preflop-only mode: terminal when preflop betting is complete
+        if self.preflop_only:
+            return self._betting_complete()
+
+        # Full game: showdown only on river
         if self.street == "river" and self._betting_complete():
             return True
 

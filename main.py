@@ -189,8 +189,8 @@ def run_hunl(args):
             # Create config for this stack depth
             single_stack_config = replace(config, stack_depths=[stack_depth])
 
-            # Create game and solver
-            game = HUNLPreflop(single_stack_config)
+            # Create game and solver (preflop_only=True for optimized compilation)
+            game = HUNLPreflop(single_stack_config, preflop_only=True)
 
             if can_share_compilation:
                 if shared_solver is None:

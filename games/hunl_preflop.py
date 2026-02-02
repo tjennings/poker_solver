@@ -5,8 +5,7 @@ Implements the Game interface for Heads-Up No-Limit Texas Hold'em
 with support for preflop through river play.
 """
 
-from dataclasses import dataclass
-from typing import Tuple, List
+from typing import Tuple, List, NamedTuple
 
 from config.loader import Config
 from core.hands import hand_to_string, HAND_COUNT
@@ -22,21 +21,8 @@ FIXED_BOARD = {
 }
 
 
-@dataclass(frozen=True)
-class HUNLState:
-    """
-    State in HUNL game.
-
-    Attributes:
-        hands: (sb_hand_idx, bb_hand_idx), indices 0-168
-        history: Tuple of actions taken, e.g., ("r2.5", "r8", "c")
-        stack: Effective stack in BB
-        pot: Current pot in BB
-        to_act: 0=SB/OOP, 1=BB/IP
-        street: Current street ("preflop", "flop", "turn", "river")
-        board: Board cards dealt so far as tuple of strings
-        street_contributions: Current street bets for (SB, BB)
-    """
+class HUNLState(NamedTuple):
+    """State in HUNL game."""
     hands: Tuple[int, int]
     history: Tuple[str, ...]
     stack: float
@@ -45,6 +31,8 @@ class HUNLState:
     street: str = "preflop"
     board: Tuple[str, ...] = ()
     street_contributions: Tuple[float, float] = (0.0, 0.0)
+    committed: Tuple[float, float] = (0.5, 1.0)
+    current_bet: float = 1.0
 
 
 class HUNLPreflop(Game):
@@ -171,51 +159,56 @@ class HUNLPreflop(Game):
         """
         Return state after taking action.
 
-        Updates pot, history, to_act, and handles street transitions.
+        Updates pot, history, to_act, committed, current_bet, and handles street transitions.
         """
         new_history = state.history + (action,)
-        player_committed = self._player_committed(state)
         player = state.to_act
+        cur_bet = state.current_bet
 
-        # Calculate amount added to pot and update street contributions
+        # For pot/raise calculation, use street contribution for post-flop
+        if state.street == "preflop":
+            player_street_committed = state.committed[player]
+        else:
+            player_street_committed = state.street_contributions[player]
+
         street_contribs = list(state.street_contributions)
+        new_committed = list(state.committed)
+        new_current_bet = cur_bet  # Default: unchanged
 
         if action == "f":
-            # Fold - no pot change
             new_pot = state.pot
-            amount_to_add = 0.0
         elif action == "c":
-            # Call/check - match current bet
-            current_bet = self._current_bet(state)
-            amount_to_add = current_bet - player_committed
+            amount_to_add = cur_bet - player_street_committed
             new_pot = state.pot + amount_to_add
+            new_committed[player] += amount_to_add
+            street_contribs[player] += amount_to_add
         elif action == "a":
-            # All-in - put entire stack in
-            amount_to_add = state.stack - player_committed
+            amount_to_add = state.stack - state.committed[player]
             new_pot = state.pot + amount_to_add
+            new_committed[player] = state.stack
+            street_contribs[player] += amount_to_add
+            new_current_bet = state.stack
         elif action.startswith("r"):
-            # Raise to specified amount
             raise_to = float(action[1:])
-            amount_to_add = raise_to - player_committed
+            amount_to_add = raise_to - player_street_committed
             new_pot = state.pot + amount_to_add
+            new_committed[player] += amount_to_add
+            street_contribs[player] += amount_to_add
+            new_current_bet = raise_to
         else:
             raise ValueError(f"Unknown action: {action}")
-
-        # Update street contributions
-        street_contribs[player] += amount_to_add
-
-        # Switch player
-        new_to_act = 1 - state.to_act
 
         new_state = HUNLState(
             hands=state.hands,
             history=new_history,
             stack=state.stack,
             pot=new_pot,
-            to_act=new_to_act,
+            to_act=1 - player,
             street=state.street,
             board=state.board,
             street_contributions=tuple(street_contribs),
+            committed=tuple(new_committed),
+            current_bet=new_current_bet,
         )
 
         # Check for street transition (not in preflop-only mode)
@@ -297,6 +290,8 @@ class HUNLPreflop(Game):
             street=new_street,
             board=new_board,
             street_contributions=(0.0, 0.0),  # Reset for new street
+            committed=state.committed,  # Preserve total committed
+            current_bet=0.0,  # Reset for new street
         )
 
     def utility(self, state: HUNLState, player: int) -> float:
@@ -305,14 +300,9 @@ class HUNLPreflop(Game):
 
         Returns profit/loss in BB.
         """
-        if not self.is_terminal(state):
-            raise ValueError(f"Cannot get utility of non-terminal state: {state}")
-
         last_action = state.history[-1]
-
-        # Calculate each player's contribution to the pot
-        sb_committed = self._total_committed(state, 0)
-        bb_committed = self._total_committed(state, 1)
+        sb_committed = state.committed[0]
+        bb_committed = state.committed[1]
 
         if last_action == "f":
             # The player who folded is determined by action count
@@ -406,16 +396,7 @@ class HUNLPreflop(Game):
 
     def _preflop_current_bet(self, state: HUNLState) -> float:
         """Get current bet for preflop street."""
-        if not state.history:
-            # Initial state: BB has 1BB posted
-            return 1.0
-
-        # Look for the most recent raise or all-in
-        for action in reversed(state.history):
-            if action.startswith("r"):
-                return float(action[1:])
-            elif action == "a":
-                return state.stack
+        return state.current_bet
 
         # No raise found - either limps or initial
         # If SB limped, current bet is 1BB (the BB)
@@ -438,25 +419,7 @@ class HUNLPreflop(Game):
 
     def _preflop_player_committed(self, state: HUNLState, player: int) -> float:
         """Get amount player has committed during preflop."""
-        # Initial blinds
-        if player == 0:
-            committed = 0.5  # SB
-        else:
-            committed = 1.0  # BB
-
-        # Process action history
-        current_player = 0  # SB acts first
-        for action in state.history:
-            if current_player == player:
-                if action == "c":
-                    current_bet = self._bet_at_action(state, current_player)
-                    committed = current_bet
-                elif action == "a":
-                    committed = state.stack
-                elif action.startswith("r"):
-                    committed = float(action[1:])
-
-            current_player = 1 - current_player
+        return state.committed[player]
 
         return committed
 
@@ -493,44 +456,25 @@ class HUNLPreflop(Game):
 
     def _calculate_total_committed(self, state: HUNLState, player: int) -> float:
         """Calculate total amount committed by player across all streets."""
-        # Initial blinds
-        if player == 0:
-            committed = 0.5  # SB
-        else:
-            committed = 1.0  # BB
+        committed = 0.5 if player == 0 else 1.0
+        current_player = 0
+        current_bet = 1.0  # Track current bet to avoid repeated scans
 
-        # Track through preflop actions
-        current_player = 0  # SB acts first preflop
-        current_street = "preflop"
-        street_committed = [0.5, 1.0]  # Track per-street commits
-
-        for action in state.history:
+        for i, action in enumerate(state.history):
             if action == "f":
-                break  # Stop at fold
+                break
+            if action.startswith("r"):
+                current_bet = float(action[1:])
+            elif action == "a":
+                current_bet = state.stack
 
             if current_player == player:
                 if action == "c":
-                    # Call - match other player's commitment on this street
-                    other = 1 - player
-                    if current_street == "preflop":
-                        # Need to calculate what we're calling
-                        call_amount = self._bet_at_action_idx(state, len([a for a in state.history[:state.history.index(action)+1]]) - 1)
-                        committed = call_amount
-                    else:
-                        committed += max(0, street_committed[other] - street_committed[player])
-                        street_committed[player] = street_committed[other]
+                    committed = current_bet
                 elif action == "a":
                     committed = state.stack
-                    street_committed[player] = state.stack - (committed - street_committed[player])
                 elif action.startswith("r"):
-                    raise_to = float(action[1:])
-                    if current_street == "preflop":
-                        committed = raise_to
-                    else:
-                        # Post-flop raise
-                        add_amount = raise_to - street_committed[player]
-                        committed += add_amount
-                        street_committed[player] = raise_to
+                    committed = float(action[1:])
 
             current_player = 1 - current_player
 

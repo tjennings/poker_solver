@@ -73,7 +73,7 @@ class TestFullPipeline:
     def test_full_pipeline_with_small_config(self, small_config):
         """Full pipeline test with small config (still needs full tree compilation)."""
         # Create game
-        game = HUNLPreflop(small_config)
+        game = HUNLPreflop(small_config, preflop_only=True)
         initial_states = game.initial_states()
         assert len(initial_states) == 169 * 168  # All hand combinations
 
@@ -97,7 +97,7 @@ class TestFullPipeline:
         assert config.stack_depth == 100
 
         # Create game
-        game = HUNLPreflop(config)
+        game = HUNLPreflop(config, preflop_only=True)
         initial_states = game.initial_states()
         assert len(initial_states) == 169 * 168  # All hand combinations
 
@@ -121,7 +121,7 @@ class TestFullPipeline:
         assert 3 in config.raise_sizes
         assert 60 in config.raise_sizes
 
-        game = HUNLPreflop(config)
+        game = HUNLPreflop(config, preflop_only=True)
         solver = Solver(game, device="cpu", batch_size=64)
         strategy = solver.solve(iterations=50, verbose=False)
 
@@ -134,7 +134,7 @@ class TestFullPipeline:
         assert config.name == "Tiny Test"
         assert config.stack_depth == 10
 
-        game = HUNLPreflop(config)
+        game = HUNLPreflop(config, preflop_only=True)
         solver = Solver(game, device="cpu", batch_size=64)
         strategy = solver.solve(iterations=100, verbose=False)
 
@@ -143,7 +143,7 @@ class TestFullPipeline:
     @pytest.mark.slow
     def test_full_pipeline_with_vanilla_cfr(self, small_config):
         """Full pipeline with vanilla CFR (batch_size=1)."""
-        game = HUNLPreflop(small_config)
+        game = HUNLPreflop(small_config, preflop_only=True)
         solver = Solver(game, device="cpu", batch_size=1)
         strategy = solver.solve(iterations=50, verbose=False)
 
@@ -200,7 +200,7 @@ class TestInteractiveSessionWorkflow:
 
     def test_session_terminal_detection(self, small_config, mock_strategy):
         """Test terminal state detection."""
-        session = InteractiveSession(small_config, mock_strategy)
+        session = InteractiveSession(small_config, mock_strategy, preflop_only=True)
 
         # Not terminal initially
         assert not session.is_terminal()
@@ -227,7 +227,7 @@ class TestInteractiveSessionWorkflow:
 
     def test_session_call_after_raise_terminal(self, small_config, mock_strategy):
         """Test call after raise creates terminal state."""
-        session = InteractiveSession(small_config, mock_strategy)
+        session = InteractiveSession(small_config, mock_strategy, preflop_only=True)
 
         # SB raise
         session.apply_action("r2.5")
@@ -280,7 +280,7 @@ class TestActionSequenceParsingIntegration:
 
     def test_action_sequence_simple(self, small_config):
         """Test parsing and executing a simple action sequence."""
-        game = HUNLPreflop(small_config)
+        game = HUNLPreflop(small_config, preflop_only=True)
 
         parsed = parse_action_sequence("SBr2.5 BBc")
         history = parsed.to_history_tuple()
@@ -299,7 +299,7 @@ class TestActionSequenceParsingIntegration:
 
     def test_action_sequence_3bet_pot(self, small_config):
         """Test 3-bet action sequence."""
-        game = HUNLPreflop(small_config)
+        game = HUNLPreflop(small_config, preflop_only=True)
 
         parsed = parse_action_sequence("SBr2.5 BBr5 SBc")
         history = parsed.to_history_tuple()
@@ -314,7 +314,7 @@ class TestActionSequenceParsingIntegration:
 
     def test_action_sequence_fold(self, small_config):
         """Test fold action sequence."""
-        game = HUNLPreflop(small_config)
+        game = HUNLPreflop(small_config, preflop_only=True)
 
         parsed = parse_action_sequence("SBr2.5 BBf")
         history = parsed.to_history_tuple()
@@ -327,7 +327,7 @@ class TestActionSequenceParsingIntegration:
 
     def test_action_sequence_limp(self, small_config):
         """Test limp action sequence."""
-        game = HUNLPreflop(small_config)
+        game = HUNLPreflop(small_config, preflop_only=True)
 
         parsed = parse_action_sequence("SBc BBc")
         history = parsed.to_history_tuple()
@@ -478,7 +478,7 @@ class TestEndToEnd:
     def test_solve_and_explore(self, small_config):
         """Test solving and then exploring the strategy."""
         # Solve
-        game = HUNLPreflop(small_config)
+        game = HUNLPreflop(small_config, preflop_only=True)
         solver = Solver(game, device="cpu", batch_size=64)
         strategy = solver.solve(iterations=200, verbose=False)
 
@@ -500,7 +500,7 @@ class TestEndToEnd:
     @pytest.mark.slow
     def test_exploitability_decreases_with_iterations(self, small_config):
         """Exploitability should decrease with more iterations."""
-        game = HUNLPreflop(small_config)
+        game = HUNLPreflop(small_config, preflop_only=True)
         solver = Solver(game, device="cpu", batch_size=64)
 
         # Train briefly
@@ -519,8 +519,8 @@ class TestEndToEnd:
         tiny_config = load_config(get_preset_path("tiny"))
         aggressive_config = load_config(get_preset_path("aggressive"))
 
-        tiny_game = HUNLPreflop(tiny_config)
-        aggressive_game = HUNLPreflop(aggressive_config)
+        tiny_game = HUNLPreflop(tiny_config, preflop_only=True)
+        aggressive_game = HUNLPreflop(aggressive_config, preflop_only=True)
 
         # Get initial state actions
         tiny_state = tiny_game.initial_states()[0]
@@ -535,7 +535,7 @@ class TestEndToEnd:
     @pytest.mark.slow
     def test_consistent_results_across_runs(self, small_config):
         """Multiple solver runs should produce valid strategies."""
-        game = HUNLPreflop(small_config)
+        game = HUNLPreflop(small_config, preflop_only=True)
 
         for _ in range(3):
             solver = Solver(game, device="cpu", batch_size=64)
