@@ -243,8 +243,8 @@ class TestRenderMatrix:
             for hand in row:
                 assert hand in clean, f"Hand {hand} not found in output"
 
-    def test_cells_are_4_char_width(self):
-        """Each cell should be left-aligned with 4-char width."""
+    def test_cells_have_proper_spacing(self):
+        """Each cell should be left-aligned with proper width (10 chars for 10% segments)."""
         strategy = _create_dummy_strategy()
         output = render_matrix(strategy, "Test", TEST_RAISE_SIZES)
         # Remove ANSI codes for checking spacing
@@ -287,7 +287,7 @@ class TestRenderLegend:
         assert "All-in" in legend_text
 
     def test_legend_raise_sizes_sorted(self):
-        """Legend should show raise sizes in sorted order."""
+        """Legend should show raise sizes in descending order (strongest first)."""
         # Pass sizes out of order
         legend_lines = render_legend([20.0, 3.0, 8.0, 2.5])
         legend_text = "\n".join(legend_lines)
@@ -296,8 +296,8 @@ class TestRenderLegend:
         pos_3 = legend_text.find("Raise 3")
         pos_8 = legend_text.find("Raise 8")
         pos_20 = legend_text.find("Raise 20")
-        # Should be in ascending order
-        assert pos_2_5 < pos_3 < pos_8 < pos_20
+        # Should be in descending order (strongest/largest first)
+        assert pos_20 < pos_8 < pos_3 < pos_2_5
 
 
 class TestRenderHeader:

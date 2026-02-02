@@ -37,8 +37,8 @@ ANSI_DARKEST_RED = "\033[38;5;124m"
 # Brightness threshold
 BRIGHT_THRESHOLD = 0.85
 
-# Cell width in characters
-CELL_WIDTH = 4
+# Cell width in characters (10 = each column represents 10% frequency)
+CELL_WIDTH = 10
 
 
 def get_raise_color(raise_size: float, raise_sizes: List[float]) -> str:
@@ -129,26 +129,29 @@ class ActionDistribution:
         """
         Get ordered list of (action, frequency) for rendering segments.
 
-        Returns actions in order: fold, call, raises (sorted by size), all_in.
+        Returns actions from strongest to weakest (left to right):
+        all_in, raises (descending by size), call, fold.
         Only includes actions with frequency > 0.
         """
         segments = []
 
-        if self.fold > 0:
-            segments.append(("fold", self.fold))
+        # Strongest action first (leftmost)
+        if self.all_in > 0:
+            segments.append(("all_in", self.all_in))
 
-        if self.call > 0:
-            segments.append(("call", self.call))
-
-        # Add raises sorted by size
+        # Raises sorted by size descending (larger raises = more aggressive)
         if self.raises:
-            sorted_raises = sorted(self.raises.items(), key=lambda x: x[0])
+            sorted_raises = sorted(self.raises.items(), key=lambda x: x[0], reverse=True)
             for size, freq in sorted_raises:
                 if freq > 0:
                     segments.append((f"r{size}", freq))
 
-        if self.all_in > 0:
-            segments.append(("all_in", self.all_in))
+        if self.call > 0:
+            segments.append(("call", self.call))
+
+        # Weakest action last (rightmost)
+        if self.fold > 0:
+            segments.append(("fold", self.fold))
 
         return segments
 
@@ -282,6 +285,8 @@ def render_legend(raise_sizes: Optional[List[float]] = None) -> List[str]:
     """
     Render the color legend with background color samples.
 
+    Legend order matches cell rendering: strongest (left) to weakest (right).
+
     Args:
         raise_sizes: List of configured raise sizes to show in legend
 
@@ -290,17 +295,17 @@ def render_legend(raise_sizes: Optional[List[float]] = None) -> List[str]:
     """
     lines = [
         "",
-        "  Legend:",
-        f"  {BG_BLUE}{ANSI_WHITE_FG}  {ANSI_RESET} Fold",
-        f"  {BG_GREEN}{ANSI_WHITE_FG}  {ANSI_RESET} Call",
+        "  Legend (left to right):",
+        f"  {BG_DARKEST_RED}{ANSI_WHITE_FG}  {ANSI_RESET} All-in",
     ]
 
-    # Add raise sizes with their colors
+    # Add raise sizes with their colors (descending - largest first)
     if raise_sizes:
-        sorted_sizes = sorted(raise_sizes)
+        sorted_sizes = sorted(raise_sizes, reverse=True)
         for i, size in enumerate(sorted_sizes):
+            # Ratio based on position in descending list
             ratio = i / max(1, len(sorted_sizes) - 1)
-            bg = BG_LIGHT_RED if ratio < 0.5 else BG_DARK_RED
+            bg = BG_DARK_RED if ratio < 0.5 else BG_LIGHT_RED
             # Format size: show as integer if whole number
             if size == int(size):
                 size_str = f"{int(size)}"
@@ -308,7 +313,8 @@ def render_legend(raise_sizes: Optional[List[float]] = None) -> List[str]:
                 size_str = f"{size:g}"
             lines.append(f"  {bg}{ANSI_WHITE_FG}  {ANSI_RESET} Raise {size_str}")
 
-    lines.append(f"  {BG_DARKEST_RED}{ANSI_WHITE_FG}  {ANSI_RESET} All-in")
+    lines.append(f"  {BG_GREEN}{ANSI_WHITE_FG}  {ANSI_RESET} Call")
+    lines.append(f"  {BG_BLUE}{ANSI_WHITE_FG}  {ANSI_RESET} Fold")
 
     return lines
 
