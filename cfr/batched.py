@@ -89,6 +89,9 @@ class BatchedCFR:
             self.num_non_terminal, device=self.device
         )
 
+        # Precompute batch indices for vectorized operations (avoids per-call tensor creation)
+        self.batch_indices = torch.arange(self.batch_size, device=self.device)[:, None]
+
     def _build_depth_edges(self):
         """Build edges grouped by depth for level-parallel processing (vectorized)."""
         c = self.compiled
@@ -205,16 +208,10 @@ class BatchedCFR:
             # Get parent reach for all edges
             parent_reach = reach[:, parents, :]  # [batch, num_edges, num_players]
 
-            # Child inherits parent reach
+            # Child inherits parent reach, then multiply acting player's reach by action prob
             child_reach = parent_reach.clone()
-
-            # Multiply acting player's reach by action probability
-            # probs is [num_edges], need to apply to correct player dimension
-            batch_indices = torch.arange(self.batch_size, device=self.device)[:, None]
-            edge_indices = torch.arange(len(parents), device=self.device)[None, :]
-
-            # Update only the acting player's reach
-            child_reach[batch_indices, edge_indices, players] *= probs
+            edge_indices = torch.arange(len(parents), device=self.device)
+            child_reach[:, edge_indices, players] *= probs
 
             # Scatter to child nodes
             reach[:, children, :] = child_reach
@@ -261,7 +258,7 @@ class BatchedCFR:
         return utils
 
     def train_step(self):
-        """Vectorized batched CFR iteration."""
+        """Fully vectorized batched CFR iteration - no Python loops over actions."""
         strategy = self.get_current_strategy()
         reach = self.forward_reach(strategy)
         utils = self.backward_utils(reach, strategy)
@@ -272,10 +269,8 @@ class BatchedCFR:
         players = self.nt_players  # [num_nt]
         opponents = self.nt_opponents  # [num_nt]
 
-        # Get reach and utility values for non-terminal nodes
-        # reach: [batch, num_nodes, num_players]
-        # Use gather for efficient indexing without memory explosion
-        batch_idx = torch.arange(self.batch_size, device=self.device)[:, None]
+        c = self.compiled
+        num_nt = len(nt_idx)
 
         # Index reach and utils for non-terminal nodes
         nt_reach = reach[:, nt_idx, :]  # [batch, num_nt, num_players]
@@ -285,44 +280,52 @@ class BatchedCFR:
         cf_reach = nt_reach.gather(2, opponents[None, :, None].expand(self.batch_size, -1, 1)).squeeze(-1)  # [batch, num_nt]
         node_util = nt_utils.gather(2, players[None, :, None].expand(self.batch_size, -1, 1)).squeeze(-1)  # [batch, num_nt]
 
-        # For each action, compute regret and accumulate
-        c = self.compiled
+        # Get action mask and child indices for all actions at once
+        action_mask = c.action_mask[nt_idx, :]  # [num_nt, max_actions]
+        child_indices = c.action_child[nt_idx, :]  # [num_nt, max_actions]
+
+        # Clamp child indices to valid range (invalid ones will be masked out)
+        child_indices_clamped = child_indices.clamp(0, c.num_nodes - 1)
+
+        # Get child utilities for ALL actions at once: [batch, num_nt, max_actions, num_players]
+        # Use advanced indexing to gather all children
+        all_child_utils = utils[:, child_indices_clamped, :]  # [batch, num_nt, max_actions, num_players]
+
+        # Get action utilities for the acting player: [batch, num_nt, max_actions]
+        players_expanded = players[None, :, None, None].expand(self.batch_size, -1, c.max_actions, 1)
+        action_utils = all_child_utils.gather(3, players_expanded).squeeze(-1)  # [batch, num_nt, max_actions]
+
+        # Compute regrets for all actions: cf_reach * (action_util - node_util)
+        # node_util: [batch, num_nt] -> expand to [batch, num_nt, max_actions]
+        regrets = cf_reach[:, :, None] * (action_utils - node_util[:, :, None])  # [batch, num_nt, max_actions]
+
+        # Apply action mask and sum across batch
+        regrets = regrets * action_mask[None, :, :].float()  # [batch, num_nt, max_actions]
+        regret_sums = regrets.sum(dim=0)  # [num_nt, max_actions]
+
+        # Scatter add regrets to info sets for all actions at once
+        # Expand info_sets to [num_nt, max_actions] for scatter
+        info_sets_expanded = info_sets[:, None].expand(-1, c.max_actions)  # [num_nt, max_actions]
+
+        # Use scatter_add_ for each action dimension
         for a in range(c.max_actions):
-            # Mask for nodes that have this action
-            action_valid = c.action_mask[nt_idx, a]  # [num_nt]
-            if not action_valid.any():
-                continue
+            self.regret_sum[:, a].scatter_add_(0, info_sets_expanded[:, a], regret_sums[:, a])
 
-            # Get child indices for this action
-            child_idx = c.action_child[nt_idx, a]  # [num_nt]
-
-            # Get action utility (child utility for acting player)
-            child_utils = utils[:, child_idx, :]  # [batch, num_nt, num_players]
-            action_util = child_utils.gather(2, players[None, :, None].expand(self.batch_size, -1, 1)).squeeze(-1)  # [batch, num_nt]
-
-            # Compute regret: cf_reach * (action_util - node_util)
-            regret = cf_reach * (action_util - node_util)  # [batch, num_nt]
-
-            # Sum across batch and accumulate to info sets
-            regret_sum = regret.sum(dim=0)  # [num_nt]
-
-            # Scatter add to regret_sum tensor (only for valid actions)
-            regret_sum = regret_sum * action_valid.float()
-            self.regret_sum[:, a].scatter_add_(0, info_sets, regret_sum)
-
-        # Vectorized strategy sum update
+        # Vectorized strategy sum update - all actions at once
         my_reach = nt_reach.gather(2, players[None, :, None].expand(self.batch_size, -1, 1)).squeeze(-1).sum(dim=0)  # [num_nt]
 
-        for a in range(c.max_actions):
-            action_valid = c.action_mask[nt_idx, a]  # [num_nt]
-            if not action_valid.any():
-                continue
+        # Get strategy values for all actions: [num_nt, max_actions]
+        strat_at_nodes = strategy[info_sets, :]  # [num_nt, max_actions]
 
-            strat_contrib = my_reach * strategy[info_sets, a] * action_valid.float()
-            self.strategy_sum[:, a].scatter_add_(0, info_sets, strat_contrib)
+        # Compute contributions: my_reach * strategy * action_mask
+        strat_contribs = my_reach[:, None] * strat_at_nodes * action_mask.float()  # [num_nt, max_actions]
+
+        # Scatter add to strategy_sum for all actions
+        for a in range(c.max_actions):
+            self.strategy_sum[:, a].scatter_add_(0, info_sets_expanded[:, a], strat_contribs[:, a])
 
         # CFR+ modification: floor regrets at zero
-        self.regret_sum = torch.clamp(self.regret_sum, min=0)
+        self.regret_sum.clamp_(min=0)
 
         self.iterations += self.batch_size
 

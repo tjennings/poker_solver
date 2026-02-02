@@ -90,8 +90,9 @@ class Solver:
             for step in step_iter:
                 self.engine.train_step()
 
-                # Update progress bar with exploitability periodically
-                if verbose and (step + 1) % max(1, steps // 10) == 0:
+                # Update progress bar with exploitability only at 50% and 100%
+                # (exploitability computation is expensive - requires GPU sync)
+                if verbose and (step + 1) in (steps // 2, steps):
                     exploit = self.exploitability()
                     step_iter.set_postfix({"exploit": f"{exploit:.4f}"})
         else:
