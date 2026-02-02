@@ -38,9 +38,9 @@ ANSI_DARKEST_RED = "\033[38;5;124m"
 # Brightness threshold
 BRIGHT_THRESHOLD = 0.85
 
-# Cell dimensions (5 wide x 4 tall approximates square in terminal due to ~2:1 char aspect ratio)
+# Cell dimensions
 CELL_WIDTH = 5
-CELL_HEIGHT = 4
+CELL_HEIGHT = 2
 
 
 def get_raise_color(raise_size: float, raise_sizes: List[float]) -> str:
