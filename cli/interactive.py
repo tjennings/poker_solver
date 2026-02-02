@@ -80,20 +80,21 @@ class InteractiveSession:
 
     Attributes:
         config: Game configuration
-        strategy: Dictionary mapping info_set_key to ActionDistribution
+        raw_strategy: Full strategy dictionary from solver (keyed by info_set_key)
         history: List of actions taken in current exploration
         stack: Stack size from config
     """
 
-    def __init__(self, config: Config, strategy: Dict):
+    def __init__(self, config: Config, raw_strategy: Dict):
         """Initialize an interactive session.
 
         Args:
             config: Configuration with stack_depth and raise_sizes
-            strategy: Dictionary mapping hands/info sets to ActionDistribution
+            raw_strategy: Full strategy dictionary from solver with keys like
+                "SB:AA:r2.5-r8" mapping to action probabilities
         """
         self.config = config
-        self.strategy = strategy
+        self.raw_strategy = raw_strategy
         self.history: List[str] = []
         self.stack: float = config.stack_depth
 
@@ -334,6 +335,53 @@ class InteractiveSession:
 
         return False
 
+    def get_strategy_for_current_state(self) -> Dict[str, ActionDistribution]:
+        """Get the strategy dictionary for the current game state.
+
+        Filters the raw strategy to only include hands matching the current
+        history, and converts to ActionDistribution objects.
+
+        Returns:
+            Dictionary mapping hand strings to ActionDistribution
+        """
+        history_str = "-".join(self.history) if self.history else ""
+        result = {}
+
+        for info_set_key, probs in self.raw_strategy.items():
+            # Parse "POSITION:HAND:HISTORY"
+            parts = info_set_key.split(":")
+            if len(parts) != 3:
+                continue
+            position, hand, history = parts
+
+            # Only include strategies matching current history
+            if history != history_str:
+                continue
+
+            # Build action distribution from probabilities
+            fold = probs.get("f", 0.0)
+            call = probs.get("c", 0.0)
+            all_in = probs.get("a", 0.0)
+
+            # Collect raise actions (anything starting with 'r')
+            raises = {}
+            for action_key, prob in probs.items():
+                if action_key.startswith("r"):
+                    try:
+                        size = float(action_key[1:])
+                        raises[size] = prob
+                    except ValueError:
+                        pass
+
+            result[hand] = ActionDistribution(
+                fold=fold,
+                call=call,
+                raises=raises,
+                all_in=all_in,
+            )
+
+        return result
+
     def get_strategy_for_hand(self, hand: str) -> Optional[ActionDistribution]:
         """Get the strategy for a specific hand.
 
@@ -343,7 +391,8 @@ class InteractiveSession:
         Returns:
             ActionDistribution if found, None otherwise
         """
-        return self.strategy.get(hand)
+        strategy = self.get_strategy_for_current_state()
+        return strategy.get(hand)
 
     def render(self) -> str:
         """Render the current state as a string.
@@ -365,8 +414,11 @@ class InteractiveSession:
             player=self.get_current_player(),
         )
 
+        # Get strategy for current state (filtered by history)
+        current_strategy = self.get_strategy_for_current_state()
+
         # Render matrix
-        matrix = render_matrix(self.strategy, header)
+        matrix = render_matrix(current_strategy, header)
 
         return matrix
 

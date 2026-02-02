@@ -27,11 +27,20 @@ def empty_strategy():
 
 @pytest.fixture
 def sample_strategy():
-    """Create a sample strategy for testing."""
+    """Create a sample raw strategy for testing.
+
+    Uses the info_set_key format: "POSITION:HAND:HISTORY"
+    with action probabilities as dicts.
+    """
     return {
-        "AA": ActionDistribution(fold=0.0, call=0.0, raises={3.0: 0.9}, all_in=0.1),
-        "AKs": ActionDistribution(fold=0.0, call=0.2, raises={2.5: 0.7}, all_in=0.1),
-        "72o": ActionDistribution(fold=0.9, call=0.1, raises={}, all_in=0.0),
+        # SB initial strategies (empty history)
+        "SB:AA:": {"f": 0.0, "c": 0.0, "r3.0": 0.9, "a": 0.1},
+        "SB:AKs:": {"f": 0.0, "c": 0.2, "r2.5": 0.7, "a": 0.1},
+        "SB:72o:": {"f": 0.9, "c": 0.1},
+        # BB strategies after SB raises 2.5
+        "BB:AA:r2.5": {"f": 0.0, "c": 0.1, "r8": 0.8, "a": 0.1},
+        "BB:AKs:r2.5": {"f": 0.1, "c": 0.5, "r8": 0.4},
+        "BB:72o:r2.5": {"f": 0.95, "c": 0.05},
     }
 
 
@@ -186,11 +195,11 @@ class TestInteractiveSessionInit:
         assert session.stack == 100.0
 
     def test_session_stores_strategy(self, config, sample_strategy):
-        """Session should store the strategy."""
+        """Session should store the raw strategy."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, sample_strategy)
-        assert session.strategy == sample_strategy
+        assert session.raw_strategy == sample_strategy
 
 
 class TestInteractiveSessionApplyAction:
@@ -434,6 +443,33 @@ class TestInteractiveSessionGetStrategyForHand:
         session = InteractiveSession(config, sample_strategy)
         result = session.get_strategy_for_hand("KK")
         assert result is None
+
+    def test_strategy_changes_after_action(self, config, sample_strategy):
+        """Strategy should update based on current history."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, sample_strategy)
+        # At start (SB to act), AA should have raise strategy
+        sb_strategy = session.get_strategy_for_hand("AA")
+        assert sb_strategy is not None
+        assert sb_strategy.raises.get(3.0) == 0.9
+
+        # After SB raises 2.5, BB faces different strategy
+        session.apply_action("r2.5")
+        bb_strategy = session.get_strategy_for_hand("AA")
+        assert bb_strategy is not None
+        # BB's AA strategy facing raise should have r8 as main raise
+        assert bb_strategy.raises.get(8) == 0.8
+
+    def test_strategy_returns_empty_for_unknown_history(self, config, sample_strategy):
+        """Strategy should be empty for histories not in raw strategy."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, sample_strategy)
+        # sample_strategy only has "" and "r2.5" histories
+        session.apply_action("r3.0")  # Unknown history
+        result = session.get_strategy_for_current_state()
+        assert result == {}
 
 
 class TestInteractiveSessionRender:

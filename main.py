@@ -177,86 +177,15 @@ def run_hunl(args):
                 print(f"Strategy saved to: {args.save} ({size_mb:.1f} MB)")
                 print()
 
-    # Build interactive-compatible strategy (grouped by hand)
-    # The raw strategy is keyed by info_set_key "POSITION:HAND:HISTORY"
-    # We need to extract the action distributions per hand at current node
-    interactive_strategy = _build_interactive_strategy(strategy, initial_actions)
-
     # Enter interactive mode unless disabled
+    # Pass raw strategy - InteractiveSession filters dynamically based on history
     if not args.no_interactive:
-        run_interactive(config, interactive_strategy, initial_actions=initial_actions)
+        run_interactive(config, strategy, initial_actions=initial_actions)
     else:
         if not args.quiet:
             print("Training complete. Use --no-interactive to skip interactive mode.")
         else:
             print(f"Training complete. Exploitability: {solver.exploitability():.6f}")
-
-
-def _build_interactive_strategy(raw_strategy, initial_actions):
-    """Build a strategy dictionary compatible with interactive mode.
-
-    Args:
-        raw_strategy: Dictionary from solver with keys like "SB:AA:r2.5-r8"
-        initial_actions: Tuple of initial actions applied
-
-    Returns:
-        Dictionary mapping hand strings to ActionDistribution
-    """
-    from cli.matrix import ActionDistribution
-
-    # Group strategy by hand for the current history
-    history_str = "-".join(initial_actions) if initial_actions else ""
-
-    # Collect all hands and their action distributions
-    hands_strategy = {}
-
-    for info_set_key, probs in raw_strategy.items():
-        # Parse "POSITION:HAND:HISTORY"
-        parts = info_set_key.split(":")
-        if len(parts) != 3:
-            continue
-        position, hand, history = parts
-
-        # Only include strategies matching current history prefix
-        if history != history_str:
-            continue
-
-        # Build action distribution from probabilities
-        if hand not in hands_strategy:
-            hands_strategy[hand] = {}
-
-        # Merge action probabilities
-        for action, prob in probs.items():
-            if action not in hands_strategy[hand]:
-                hands_strategy[hand][action] = 0.0
-            hands_strategy[hand][action] = prob
-
-    # Convert to ActionDistribution objects
-    result = {}
-    for hand, actions in hands_strategy.items():
-        # Parse action probabilities into ActionDistribution format
-        fold = actions.get("f", 0.0)
-        call = actions.get("c", 0.0)
-        all_in = actions.get("a", 0.0)
-
-        # Collect raise actions (anything starting with 'r')
-        raises = {}
-        for action_key, prob in actions.items():
-            if action_key.startswith("r"):
-                try:
-                    size = float(action_key[1:])
-                    raises[size] = prob
-                except ValueError:
-                    pass
-
-        result[hand] = ActionDistribution(
-            fold=fold,
-            call=call,
-            raises=raises,
-            all_in=all_in,
-        )
-
-    return result
 
 
 def add_kuhn_args(parser):
