@@ -34,7 +34,7 @@ python3.14 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # 3. Install dependencies (required before running)
-pip install torch numpy pytest pyyaml
+pip install torch numpy pytest pyyaml tqdm
 ```
 
 Alternatively, install as a package:

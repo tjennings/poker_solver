@@ -32,6 +32,7 @@ def run_kuhn(args):
         game=KuhnPoker(),
         device=args.device,
         batch_size=args.batch_size,
+        verbose=not args.quiet,
     )
 
     # Solve
@@ -125,6 +126,7 @@ def run_hunl(args):
         game=game,
         device=args.device,
         batch_size=args.batch_size,
+        verbose=not args.quiet,
     )
 
     # Train

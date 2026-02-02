@@ -43,11 +43,20 @@ class CompiledGame:
     device: torch.device
 
 
-def compile_game(game: Game, device: torch.device) -> CompiledGame:
+def compile_game(
+    game: Game,
+    device: torch.device,
+    verbose: bool = False,
+) -> CompiledGame:
     """
     Compile game tree to tensor representation.
 
     Traverses tree once, assigns indices, builds GPU-friendly tensors.
+
+    Args:
+        game: Game instance to compile
+        device: Torch device for tensors
+        verbose: Show progress bar during enumeration
     """
     nodes = []
     info_set_to_idx: Dict[str, int] = {}
@@ -100,9 +109,14 @@ def compile_game(game: Game, device: torch.device) -> CompiledGame:
         return node_idx
 
     # Build tree for all initial states
-    for initial_state in game.initial_states():
-        enumerate_tree(initial_state, depth=0)
+    initial_states = list(game.initial_states())
 
+    if verbose:
+        from tqdm import tqdm
+        initial_states = tqdm(initial_states, desc="Enumerating states", unit="state")
+
+    for initial_state in initial_states:
+        enumerate_tree(initial_state, depth=0)
     # Convert to tensors
     num_nodes = len(nodes)
     num_players = game.num_players()

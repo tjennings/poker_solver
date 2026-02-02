@@ -23,6 +23,7 @@ class Solver:
         game: Game,
         device: str = "auto",
         batch_size: int = 1,
+        verbose: bool = False,
     ):
         """
         Initialize solver.
@@ -31,6 +32,7 @@ class Solver:
             game: Game instance to solve
             device: "auto", "cpu", "cuda", or "mps"
             batch_size: Number of parallel iterations (1 = vanilla CFR)
+            verbose: Show progress during game tree compilation
         """
         self.game = game
         self.batch_size = batch_size
@@ -42,7 +44,7 @@ class Solver:
         else:
             # Use batched GPU implementation
             self.device = get_device(device)
-            self.compiled = compile_game(game, self.device)
+            self.compiled = compile_game(game, self.device, verbose=verbose)
             self.engine = BatchedCFR(self.compiled, batch_size)
             self.batched = True
 
