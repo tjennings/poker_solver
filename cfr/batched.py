@@ -244,12 +244,16 @@ class BatchedCFR:
 
         # Get reach and utility values for non-terminal nodes
         # reach: [batch, num_nodes, num_players]
-        cf_reach = reach[:, nt_idx, opponents.unsqueeze(0).expand(self.batch_size, -1)]  # [batch, num_nt]
-        # Need advanced indexing for player dimension
+        # Use gather for efficient indexing without memory explosion
         batch_idx = torch.arange(self.batch_size, device=self.device)[:, None]
-        nt_range = torch.arange(self.num_non_terminal, device=self.device)[None, :]
-        cf_reach = reach[batch_idx, nt_idx, opponents]  # [batch, num_nt]
-        node_util = utils[batch_idx, nt_idx, players]  # [batch, num_nt]
+
+        # Index reach and utils for non-terminal nodes
+        nt_reach = reach[:, nt_idx, :]  # [batch, num_nt, num_players]
+        nt_utils = utils[:, nt_idx, :]  # [batch, num_nt, num_players]
+
+        # Get counterfactual reach (opponent's reach) and node utility (player's utility)
+        cf_reach = nt_reach.gather(2, opponents[None, :, None].expand(self.batch_size, -1, 1)).squeeze(-1)  # [batch, num_nt]
+        node_util = nt_utils.gather(2, players[None, :, None].expand(self.batch_size, -1, 1)).squeeze(-1)  # [batch, num_nt]
 
         # For each action, compute regret and accumulate
         c = self.compiled
@@ -263,7 +267,8 @@ class BatchedCFR:
             child_idx = c.action_child[nt_idx, a]  # [num_nt]
 
             # Get action utility (child utility for acting player)
-            action_util = utils[batch_idx, child_idx, players]  # [batch, num_nt]
+            child_utils = utils[:, child_idx, :]  # [batch, num_nt, num_players]
+            action_util = child_utils.gather(2, players[None, :, None].expand(self.batch_size, -1, 1)).squeeze(-1)  # [batch, num_nt]
 
             # Compute regret: cf_reach * (action_util - node_util)
             regret = cf_reach * (action_util - node_util)  # [batch, num_nt]
@@ -276,7 +281,7 @@ class BatchedCFR:
             self.regret_sum[:, a].scatter_add_(0, info_sets, regret_sum)
 
         # Vectorized strategy sum update
-        my_reach = reach[batch_idx, nt_idx, players].sum(dim=0)  # [num_nt]
+        my_reach = nt_reach.gather(2, players[None, :, None].expand(self.batch_size, -1, 1)).squeeze(-1).sum(dim=0)  # [num_nt]
 
         for a in range(c.max_actions):
             action_valid = c.action_mask[nt_idx, a]  # [num_nt]
