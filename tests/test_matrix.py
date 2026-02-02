@@ -204,8 +204,9 @@ class TestRenderMatrix:
         """Rendered matrix should contain hand names."""
         strategy = _create_dummy_strategy()
         output = render_matrix(strategy, "Test", TEST_RAISE_SIZES)
-        assert "AA" in output
-        assert "AKo" in output
+        clean = _strip_ansi(output)
+        assert "AA" in clean
+        assert "AKo" in clean
 
     def test_render_contains_header(self):
         """Rendered matrix should include the header."""
@@ -236,10 +237,11 @@ class TestRenderMatrix:
         """Rendered matrix should contain all 169 hands."""
         strategy = _create_dummy_strategy()
         output = render_matrix(strategy, "Test", TEST_RAISE_SIZES)
+        clean = _strip_ansi(output)
         layout = get_matrix_layout()
         for row in layout:
             for hand in row:
-                assert hand in output, f"Hand {hand} not found in output"
+                assert hand in clean, f"Hand {hand} not found in output"
 
     def test_cells_are_4_char_width(self):
         """Each cell should be left-aligned with 4-char width."""

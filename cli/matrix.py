@@ -2,7 +2,8 @@
 Matrix Display Module for HUNL Preflop Strategy Visualization.
 
 Provides color-coded 13x13 strategy matrix display for terminal output
-using ANSI escape codes.
+using ANSI escape codes. Each cell shows action frequencies as colored
+background segments with white text.
 """
 
 from dataclasses import dataclass
@@ -11,24 +12,33 @@ from typing import Dict, List, Tuple, Optional
 from core.hands import get_matrix_layout
 
 
-# ANSI escape codes for colors
+# ANSI escape codes
 ANSI_RESET = "\033[0m"
+ANSI_WHITE_FG = "\033[97m"  # Bright white foreground
 
-# Blue for fold
+# Background colors (256-color mode)
+BG_BLUE = "\033[48;5;24m"      # Blue for fold
+BG_GREEN = "\033[48;5;22m"     # Green for call
+BG_LIGHT_RED = "\033[48;5;124m"   # Light red for small raises
+BG_DARK_RED = "\033[48;5;88m"    # Dark red for large raises
+BG_DARKEST_RED = "\033[48;5;52m"  # Darkest red for all-in
+BG_GRAY = "\033[48;5;236m"     # Gray for no strategy
+
+# Foreground colors for legend
 ANSI_DIM_BLUE = "\033[34m"
 ANSI_BRIGHT_BLUE = "\033[94m"
-
-# Green for call
 ANSI_DIM_GREEN = "\033[32m"
 ANSI_BRIGHT_GREEN = "\033[92m"
 
-# Red color codes for raises (256-color mode)
-# Gradient from light to dark: 203 -> 196 -> 160 -> 124
-RED_GRADIENT = [203, 196, 167, 160, 124]  # Light to dark red codes
-ANSI_DARKEST_RED = "\033[38;5;124m"  # Reserved for all-in
+# Red color codes for raises (256-color mode foreground)
+RED_GRADIENT = [203, 196, 167, 160, 124]
+ANSI_DARKEST_RED = "\033[38;5;124m"
 
 # Brightness threshold
 BRIGHT_THRESHOLD = 0.85
+
+# Cell width in characters
+CELL_WIDTH = 4
 
 
 def get_raise_color(raise_size: float, raise_sizes: List[float]) -> str:
@@ -115,6 +125,120 @@ class ActionDistribution:
         # Fallback (should never reach)
         return "fold", self.fold, None
 
+    def get_action_segments(self, raise_sizes: Optional[List[float]] = None) -> List[Tuple[str, float]]:
+        """
+        Get ordered list of (action, frequency) for rendering segments.
+
+        Returns actions in order: fold, call, raises (sorted by size), all_in.
+        Only includes actions with frequency > 0.
+        """
+        segments = []
+
+        if self.fold > 0:
+            segments.append(("fold", self.fold))
+
+        if self.call > 0:
+            segments.append(("call", self.call))
+
+        # Add raises sorted by size
+        if self.raises:
+            sorted_raises = sorted(self.raises.items(), key=lambda x: x[0])
+            for size, freq in sorted_raises:
+                if freq > 0:
+                    segments.append((f"r{size}", freq))
+
+        if self.all_in > 0:
+            segments.append(("all_in", self.all_in))
+
+        return segments
+
+
+def get_bg_color_for_action(action: str, raise_sizes: Optional[List[float]] = None) -> str:
+    """Get background color for an action."""
+    if action == "fold":
+        return BG_BLUE
+    elif action == "call":
+        return BG_GREEN
+    elif action == "all_in":
+        return BG_DARKEST_RED
+    elif action.startswith("r"):
+        # Raise - gradient based on size
+        if raise_sizes:
+            try:
+                size = float(action[1:])
+                sorted_sizes = sorted(raise_sizes)
+                idx = min(range(len(sorted_sizes)), key=lambda i: abs(sorted_sizes[i] - size))
+                ratio = idx / max(1, len(sorted_sizes) - 1)
+                if ratio < 0.5:
+                    return BG_LIGHT_RED
+                else:
+                    return BG_DARK_RED
+            except ValueError:
+                pass
+        return BG_LIGHT_RED
+    return BG_GRAY
+
+
+def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Optional[List[float]] = None) -> str:
+    """
+    Render a single cell with frequency-based background segments.
+
+    Each character position gets a background color based on the action
+    that "owns" that frequency range.
+
+    Args:
+        hand: Hand name (e.g., "AA", "AKs", "72o")
+        dist: Action distribution for this hand
+        raise_sizes: List of configured raise sizes
+
+    Returns:
+        ANSI-formatted string for the cell
+    """
+    # Pad hand to cell width
+    padded = f"{hand:<{CELL_WIDTH}}"
+
+    if dist is None:
+        # No strategy - gray background
+        return f"{BG_GRAY}{ANSI_WHITE_FG}{padded}{ANSI_RESET}"
+
+    # Get action segments
+    segments = dist.get_action_segments(raise_sizes)
+
+    if not segments:
+        return f"{BG_GRAY}{ANSI_WHITE_FG}{padded}{ANSI_RESET}"
+
+    # Build cumulative frequency ranges
+    cumulative = []
+    total = 0.0
+    for action, freq in segments:
+        cumulative.append((action, total, total + freq))
+        total += freq
+
+    # For each character position, find which action owns it
+    result = []
+    for i in range(CELL_WIDTH):
+        # Position covers range [i/CELL_WIDTH, (i+1)/CELL_WIDTH]
+        # Use midpoint to determine owner
+        midpoint = (i + 0.5) / CELL_WIDTH
+
+        # Scale midpoint to total frequency (should be ~1.0)
+        scaled_pos = midpoint * total if total > 0 else 0
+
+        # Find which action owns this position
+        bg_color = BG_GRAY
+        for action, start, end in cumulative:
+            if start <= scaled_pos < end:
+                bg_color = get_bg_color_for_action(action, raise_sizes)
+                break
+        else:
+            # If past all segments, use last action's color
+            if cumulative:
+                bg_color = get_bg_color_for_action(cumulative[-1][0], raise_sizes)
+
+        result.append(f"{bg_color}{ANSI_WHITE_FG}{padded[i]}")
+
+    return "".join(result) + ANSI_RESET
+
 
 def get_color_for_action(
     action: str,
@@ -156,7 +280,7 @@ def get_color_for_action(
 
 def render_legend(raise_sizes: Optional[List[float]] = None) -> List[str]:
     """
-    Render the color legend.
+    Render the color legend with background color samples.
 
     Args:
         raise_sizes: List of configured raise sizes to show in legend
@@ -167,23 +291,24 @@ def render_legend(raise_sizes: Optional[List[float]] = None) -> List[str]:
     lines = [
         "",
         "  Legend:",
-        f"  {ANSI_BRIGHT_BLUE}■{ANSI_RESET} Fold",
-        f"  {ANSI_BRIGHT_GREEN}■{ANSI_RESET} Call",
+        f"  {BG_BLUE}{ANSI_WHITE_FG}  {ANSI_RESET} Fold",
+        f"  {BG_GREEN}{ANSI_WHITE_FG}  {ANSI_RESET} Call",
     ]
 
     # Add raise sizes with their colors
     if raise_sizes:
         sorted_sizes = sorted(raise_sizes)
-        for size in sorted_sizes:
-            color = get_raise_color(size, sorted_sizes)
+        for i, size in enumerate(sorted_sizes):
+            ratio = i / max(1, len(sorted_sizes) - 1)
+            bg = BG_LIGHT_RED if ratio < 0.5 else BG_DARK_RED
             # Format size: show as integer if whole number
             if size == int(size):
                 size_str = f"{int(size)}"
             else:
                 size_str = f"{size:g}"
-            lines.append(f"  {color}■{ANSI_RESET} Raise {size_str}")
+            lines.append(f"  {bg}{ANSI_WHITE_FG}  {ANSI_RESET} Raise {size_str}")
 
-    lines.append(f"  {ANSI_DARKEST_RED}■{ANSI_RESET} All-in")
+    lines.append(f"  {BG_DARKEST_RED}{ANSI_WHITE_FG}  {ANSI_RESET} All-in")
 
     return lines
 
@@ -218,15 +343,8 @@ def render_matrix(
         for hand in row:
             # Get the action distribution for this hand
             dist = strategy.get(hand)
-            if dist is not None:
-                action, freq, raise_size = dist.dominant_action()
-                color = get_color_for_action(action, freq, raise_size, raise_sizes)
-            else:
-                # Default to no color if no strategy for this hand
-                color = ANSI_RESET
-
-            # Format cell: left-aligned, 4-char width
-            cell = f"{color}{hand:<4}{ANSI_RESET}"
+            # Render cell with frequency-segmented background
+            cell = render_cell(hand, dist, raise_sizes)
             row_cells.append(cell)
 
         # Combine row with legend (if legend line exists for this row)

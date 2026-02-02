@@ -1,10 +1,17 @@
 """Tests for the interactive CLI module."""
 
+import re
 import pytest
 from typing import Dict
 
 from config.loader import Config
 from cli.matrix import ActionDistribution
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    ansi_pattern = re.compile(r"\033\[[0-9;]*m")
+    return ansi_pattern.sub("", text)
 
 
 # Fixtures
@@ -499,8 +506,9 @@ class TestInteractiveSessionRender:
 
         session = InteractiveSession(config, sample_strategy)
         result = session.render()
-        # Matrix should contain hand names
-        assert "AA" in result
+        # Matrix should contain hand names (strip ANSI codes for checking)
+        clean = _strip_ansi(result)
+        assert "AA" in clean
 
 
 # Edge case tests for comprehensive coverage
