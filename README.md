@@ -87,6 +87,12 @@ python main.py hunl --config standard --action "50bb SBr2.5"
 
 # GPU acceleration
 python main.py hunl --config standard --iterations 100000 --device cuda
+
+# Save trained strategy to file (for instant loading later)
+python main.py hunl --config standard --iterations 100000 --save strategy.gz
+
+# Load pre-trained strategy (skips training entirely)
+python main.py hunl --config standard --load strategy.gz
 ```
 
 **Action Notation:**
