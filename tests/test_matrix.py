@@ -8,15 +8,16 @@ from cli.matrix import (
     get_color_for_action,
     render_matrix,
     render_header,
+    render_legend,
     ANSI_RESET,
-    ANSI_DIM_RED,
-    ANSI_BRIGHT_RED,
-    ANSI_DIM_GREEN,
-    ANSI_BRIGHT_GREEN,
     ANSI_DIM_BLUE,
     ANSI_BRIGHT_BLUE,
-    ANSI_DIM_YELLOW,
-    ANSI_BRIGHT_YELLOW,
+    ANSI_DIM_GREEN,
+    ANSI_BRIGHT_GREEN,
+    ANSI_LIGHT_RED,
+    ANSI_MEDIUM_RED,
+    ANSI_DARK_RED,
+    ANSI_DARKEST_RED,
 )
 from core.hands import get_matrix_layout
 
@@ -45,9 +46,10 @@ class TestActionDistribution:
             raises={2.5: 0.1},
             all_in=0.0,
         )
-        action, freq = dist.dominant_action()
+        action, freq, raise_size = dist.dominant_action()
         assert action == "fold"
         assert freq == 0.7
+        assert raise_size is None
 
     def test_dominant_action_call(self):
         """dominant_action returns call when it's highest."""
@@ -57,9 +59,10 @@ class TestActionDistribution:
             raises={2.5: 0.1},
             all_in=0.0,
         )
-        action, freq = dist.dominant_action()
+        action, freq, raise_size = dist.dominant_action()
         assert action == "call"
         assert freq == 0.8
+        assert raise_size is None
 
     def test_dominant_action_raise(self):
         """dominant_action returns raise when total raises is highest."""
@@ -69,9 +72,10 @@ class TestActionDistribution:
             raises={2.5: 0.4, 3.0: 0.3},
             all_in=0.1,
         )
-        action, freq = dist.dominant_action()
+        action, freq, raise_size = dist.dominant_action()
         assert action == "raise"
         assert freq == 0.7
+        assert raise_size == 2.5  # Dominant raise size
 
     def test_dominant_action_all_in(self):
         """dominant_action returns all_in when it's highest."""
@@ -81,9 +85,10 @@ class TestActionDistribution:
             raises={2.5: 0.1},
             all_in=0.7,
         )
-        action, freq = dist.dominant_action()
+        action, freq, raise_size = dist.dominant_action()
         assert action == "all_in"
         assert freq == 0.7
+        assert raise_size is None
 
     def test_dominant_action_tie_goes_to_most_aggressive(self):
         """When tied, prefer more aggressive action."""
@@ -94,7 +99,7 @@ class TestActionDistribution:
             raises={},
             all_in=0.0,
         )
-        action, freq = dist.dominant_action()
+        action, freq, raise_size = dist.dominant_action()
         # Expect the more aggressive action to win ties
         assert action in ("fold", "call")
         assert freq == 0.5
@@ -103,49 +108,50 @@ class TestActionDistribution:
 class TestColorMapping:
     """Tests for get_color_for_action function."""
 
-    def test_fold_is_red(self):
-        """Fold action should use red ANSI codes."""
+    def test_fold_is_blue(self):
+        """Fold action should use blue ANSI codes."""
         color = get_color_for_action("fold", 0.9)
-        assert "31" in color or "91" in color
+        assert "34" in color or "94" in color
 
     def test_call_is_green(self):
         """Call action should use green ANSI codes."""
         color = get_color_for_action("call", 0.9)
         assert "32" in color or "92" in color
 
-    def test_raise_is_blue(self):
-        """Raise action should use blue ANSI codes."""
-        color = get_color_for_action("raise", 0.9)
-        assert "34" in color or "94" in color
+    def test_raise_small_is_light_red(self):
+        """Small raise should use light red."""
+        color = get_color_for_action("raise", 0.9, raise_size=5.0, max_raise=100.0)
+        assert "203" in color  # Light red 256-color code
 
-    def test_all_in_is_yellow(self):
-        """All-in action should use yellow ANSI codes."""
+    def test_raise_large_is_dark_red(self):
+        """Large raise should use dark red."""
+        color = get_color_for_action("raise", 0.9, raise_size=75.0, max_raise=100.0)
+        assert "160" in color  # Dark red 256-color code
+
+    def test_all_in_is_darkest_red(self):
+        """All-in action should use darkest red."""
         color = get_color_for_action("all_in", 0.9)
-        assert "33" in color or "93" in color
+        assert "124" in color  # Darkest red 256-color code
 
-    def test_high_frequency_is_bright(self):
-        """Frequency >= 0.85 should use bright colors."""
-        color_bright = get_color_for_action("fold", 0.90)
-        color_dim = get_color_for_action("fold", 0.65)
-        # Bright codes are 91-97, dim are 31-37
-        assert "9" in color_bright  # Bright (91)
-        assert "91" in color_bright or "9" in color_bright
+    def test_high_frequency_fold_is_bright_blue(self):
+        """Frequency >= 0.85 for fold should use bright blue."""
+        color = get_color_for_action("fold", 0.90)
+        assert "94" in color  # Bright blue
 
-    def test_low_frequency_is_dim(self):
-        """Frequency < 0.85 should use dim colors."""
+    def test_low_frequency_fold_is_dim_blue(self):
+        """Frequency < 0.85 for fold should use dim blue."""
         color = get_color_for_action("fold", 0.5)
-        # Dim codes are 31-37 (no 9 prefix)
-        assert "31" in color
-        assert "91" not in color
+        assert "34" in color  # Dim blue
 
-    def test_boundary_frequency(self):
-        """Test the boundary at exactly 0.85."""
-        color_at_85 = get_color_for_action("call", 0.85)
-        color_below_85 = get_color_for_action("call", 0.84)
-        # 0.85 should be bright
-        assert "92" in color_at_85
-        # 0.84 should be dim
-        assert "32" in color_below_85
+    def test_high_frequency_call_is_bright_green(self):
+        """Frequency >= 0.85 for call should use bright green."""
+        color = get_color_for_action("call", 0.85)
+        assert "92" in color  # Bright green
+
+    def test_low_frequency_call_is_dim_green(self):
+        """Frequency < 0.85 for call should use dim green."""
+        color = get_color_for_action("call", 0.84)
+        assert "32" in color  # Dim green
 
 
 class TestRenderMatrix:
@@ -164,7 +170,6 @@ class TestRenderMatrix:
         output = render_matrix(strategy, "Test")
         assert "AA" in output
         assert "AKo" in output
-        assert "AKs" in output
 
     def test_render_contains_header(self):
         """Rendered matrix should include the header."""
@@ -178,6 +183,15 @@ class TestRenderMatrix:
         output = render_matrix(strategy, "Test")
         assert "\033[" in output
         assert ANSI_RESET in output
+
+    def test_render_contains_legend(self):
+        """Rendered matrix should contain the legend."""
+        strategy = _create_dummy_strategy()
+        output = render_matrix(strategy, "Test")
+        assert "Legend" in output
+        assert "Fold" in output
+        assert "Call" in output
+        assert "All-in" in output
 
     def test_render_all_169_hands(self):
         """Rendered matrix should contain all 169 hands."""
@@ -195,11 +209,29 @@ class TestRenderMatrix:
         # Remove ANSI codes for checking spacing
         clean = _strip_ansi(output)
         # Check that AA appears with proper spacing
-        # This is a bit tricky since we're checking formatted output
         lines = clean.split("\n")
         # Find a line with hand data (not header)
         hand_lines = [l for l in lines if "AA" in l or "KK" in l]
         assert len(hand_lines) > 0
+
+
+class TestRenderLegend:
+    """Tests for render_legend function."""
+
+    def test_legend_contains_all_actions(self):
+        """Legend should list all action types."""
+        legend_lines = render_legend()
+        legend_text = "\n".join(legend_lines)
+        assert "Fold" in legend_text
+        assert "Call" in legend_text
+        assert "Raise" in legend_text
+        assert "All-in" in legend_text
+
+    def test_legend_contains_colors(self):
+        """Legend should contain color codes."""
+        legend_lines = render_legend()
+        legend_text = "\n".join(legend_lines)
+        assert "\033[" in legend_text
 
 
 class TestRenderHeader:
@@ -268,13 +300,13 @@ class TestANSIConstants:
         """ANSI_RESET should be the reset code."""
         assert ANSI_RESET == "\033[0m"
 
-    def test_ansi_dim_red(self):
-        """ANSI_DIM_RED should be code 31."""
-        assert "31" in ANSI_DIM_RED
+    def test_ansi_dim_blue(self):
+        """ANSI_DIM_BLUE should be code 34."""
+        assert "34" in ANSI_DIM_BLUE
 
-    def test_ansi_bright_red(self):
-        """ANSI_BRIGHT_RED should be code 91."""
-        assert "91" in ANSI_BRIGHT_RED
+    def test_ansi_bright_blue(self):
+        """ANSI_BRIGHT_BLUE should be code 94."""
+        assert "94" in ANSI_BRIGHT_BLUE
 
     def test_ansi_dim_green(self):
         """ANSI_DIM_GREEN should be code 32."""
@@ -284,21 +316,13 @@ class TestANSIConstants:
         """ANSI_BRIGHT_GREEN should be code 92."""
         assert "92" in ANSI_BRIGHT_GREEN
 
-    def test_ansi_dim_blue(self):
-        """ANSI_DIM_BLUE should be code 34."""
-        assert "34" in ANSI_DIM_BLUE
+    def test_ansi_light_red(self):
+        """ANSI_LIGHT_RED should use 256-color mode."""
+        assert "38;5;203" in ANSI_LIGHT_RED
 
-    def test_ansi_bright_blue(self):
-        """ANSI_BRIGHT_BLUE should be code 94."""
-        assert "94" in ANSI_BRIGHT_BLUE
-
-    def test_ansi_dim_yellow(self):
-        """ANSI_DIM_YELLOW should be code 33."""
-        assert "33" in ANSI_DIM_YELLOW
-
-    def test_ansi_bright_yellow(self):
-        """ANSI_BRIGHT_YELLOW should be code 93."""
-        assert "93" in ANSI_BRIGHT_YELLOW
+    def test_ansi_darkest_red(self):
+        """ANSI_DARKEST_RED should use 256-color mode."""
+        assert "38;5;124" in ANSI_DARKEST_RED
 
 
 # Helper functions
