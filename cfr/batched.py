@@ -238,8 +238,6 @@ class BatchedCFR:
 
         # Process levels in reverse order (children before parents)
         edge_iter = list(reversed(self.depth_edges))
-        if self.verbose:
-            edge_iter = tqdm(edge_iter, desc="Backward pass", unit="depth", leave=False)
 
         for parents, children, actions, info_sets, players in edge_iter:
             # Get action probabilities for all edges
