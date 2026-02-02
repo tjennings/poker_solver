@@ -32,6 +32,7 @@ class CompiledGame:
     # Mappings
     info_set_to_idx: Dict[str, int]
     idx_to_info_set: Dict[int, str]
+    info_set_actions: Dict[str, List[str]]  # Action names per info set
 
     # Dimensions
     num_info_sets: int
@@ -50,6 +51,7 @@ def compile_game(game: Game, device: torch.device) -> CompiledGame:
     """
     nodes = []
     info_set_to_idx: Dict[str, int] = {}
+    info_set_actions: Dict[str, List[str]] = {}
     depth_buckets: Dict[int, List[int]] = defaultdict(list)
 
     def add_info_set(key: str) -> int:
@@ -75,6 +77,10 @@ def compile_game(game: Game, device: torch.device) -> CompiledGame:
         info_set = game.info_set_key(state)
         info_idx = add_info_set(info_set)
         actions = game.actions(state)
+
+        # Store action names for this info set (first time only)
+        if info_set not in info_set_actions:
+            info_set_actions[info_set] = actions
 
         node = {
             "terminal": False,
@@ -146,6 +152,7 @@ def compile_game(game: Game, device: torch.device) -> CompiledGame:
         max_depth=max_depth,
         info_set_to_idx=info_set_to_idx,
         idx_to_info_set={v: k for k, v in info_set_to_idx.items()},
+        info_set_actions=info_set_actions,
         num_info_sets=len(info_set_to_idx),
         num_nodes=num_nodes,
         max_actions=max_actions,

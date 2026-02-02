@@ -159,16 +159,19 @@ class BatchedCFR:
         """Convert tensor strategy to dictionary format."""
         result = {}
         strategy_sum = self.strategy_sum.cpu().numpy()
-        actions = ["p", "b"]  # Kuhn poker actions
 
         for info_set, idx in self.compiled.info_set_to_idx.items():
+            action_names = self.compiled.info_set_actions.get(info_set, [])
             total = strategy_sum[idx].sum()
-            if total > 0:
-                result[info_set] = {
-                    actions[a]: float(strategy_sum[idx, a] / total)
-                    for a in range(self.compiled.max_actions)
-                }
-            else:
-                result[info_set] = {a: 0.5 for a in actions}
+
+            if total > 0 and action_names:
+                probs = {}
+                for a, name in enumerate(action_names):
+                    probs[name] = float(strategy_sum[idx, a] / total)
+                result[info_set] = probs
+            elif action_names:
+                # Uniform distribution if no training yet
+                num_actions = len(action_names)
+                result[info_set] = {name: 1.0 / num_actions for name in action_names}
 
         return result
