@@ -60,10 +60,13 @@ class BatchedCFR:
         )
 
     def _build_depth_edges(self):
-        """Build edges grouped by depth for level-parallel processing."""
+        """Build edges grouped by depth for level-parallel processing (vectorized)."""
         c = self.compiled
 
-        # Compute depth of each node using BFS
+        if self.verbose:
+            print("Building edge structure...", end=" ", flush=True)
+
+        # Compute depth of each node using vectorized BFS
         depth = torch.full((c.num_nodes,), -1, dtype=torch.long, device=self.device)
 
         # Find root nodes (nodes that are not children of any other node)
@@ -73,77 +76,60 @@ class BatchedCFR:
         root_nodes = torch.where(~is_child)[0]
         depth[root_nodes] = 0
 
-        # BFS to compute depths
+        # Vectorized BFS to compute depths
         current_depth = 0
-        max_depth = 0
-
-        if self.verbose:
-            print("Computing node depths...", end=" ", flush=True)
-
         while True:
-            nodes_at_depth = torch.where(depth == current_depth)[0]
-            if len(nodes_at_depth) == 0:
+            # Get non-terminal nodes at current depth
+            at_depth = (depth == current_depth) & self.non_terminal_mask
+            if not at_depth.any():
                 break
 
-            for node_idx in nodes_at_depth:
-                node_idx = node_idx.item()
-                if c.terminal_mask[node_idx]:
-                    continue
-                for a in range(c.max_actions):
-                    if c.action_mask[node_idx, a]:
-                        child_idx = c.action_child[node_idx, a].item()
-                        depth[child_idx] = current_depth + 1
-                        max_depth = max(max_depth, current_depth + 1)
+            # Get all valid (parent, child) pairs from nodes at this depth
+            # action_mask[at_depth] gives [num_at_depth, max_actions]
+            parent_mask = at_depth.unsqueeze(1) & c.action_mask  # [num_nodes, max_actions]
 
+            # Get child indices for valid edges
+            child_indices = c.action_child[parent_mask]  # [num_edges]
+
+            # Set depth of children
+            depth[child_indices] = current_depth + 1
             current_depth += 1
 
-        if self.verbose:
-            print(f"done (max depth: {max_depth})")
-
+        max_depth = current_depth - 1 if current_depth > 0 else 0
         self.node_depth = depth
         self.max_depth = max_depth
 
-        # Build edge lists per depth level
-        # Each edge: (parent_node, child_node, action, info_set, player)
+        # Build all edges at once using vectorized operations
+        # Create edge tensors for all non-terminal nodes
+        nt_mask = self.non_terminal_mask  # [num_nodes]
+
+        # Expand to [num_nodes, max_actions] for edge enumeration
+        edge_valid = nt_mask.unsqueeze(1) & c.action_mask  # [num_nodes, max_actions]
+
+        # Get indices of valid edges
+        parent_nodes, action_indices = torch.where(edge_valid)
+        child_nodes = c.action_child[parent_nodes, action_indices]
+        info_sets = c.node_info_set[parent_nodes]
+        players = c.node_player[parent_nodes]
+        edge_depths = depth[parent_nodes]
+
+        # Group edges by depth
         self.depth_edges: List[Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]] = []
 
-        depth_iter = range(max_depth + 1)
-        if self.verbose:
-            depth_iter = tqdm(depth_iter, desc="Building edges", unit="depth")
-
-        for d in depth_iter:
-            parents = []
-            children = []
-            actions = []
-            info_sets = []
-            players = []
-
-            nodes_at_depth = torch.where(depth == d)[0]
-            for node_idx in nodes_at_depth:
-                node_idx = node_idx.item()
-                if c.terminal_mask[node_idx]:
-                    continue
-
-                info_set = c.node_info_set[node_idx].item()
-                player = c.node_player[node_idx].item()
-
-                for a in range(c.max_actions):
-                    if c.action_mask[node_idx, a]:
-                        child_idx = c.action_child[node_idx, a].item()
-                        parents.append(node_idx)
-                        children.append(child_idx)
-                        actions.append(a)
-                        info_sets.append(info_set)
-                        players.append(player)
-
-            if parents:
+        for d in range(max_depth + 1):
+            mask = edge_depths == d
+            if mask.any():
                 self.depth_edges.append((
-                    torch.tensor(parents, dtype=torch.long, device=self.device),
-                    torch.tensor(children, dtype=torch.long, device=self.device),
-                    torch.tensor(actions, dtype=torch.long, device=self.device),
-                    torch.tensor(info_sets, dtype=torch.long, device=self.device),
-                    torch.tensor(players, dtype=torch.long, device=self.device),
+                    parent_nodes[mask],
+                    child_nodes[mask],
+                    action_indices[mask],
+                    info_sets[mask],
+                    players[mask],
                 ))
+
+        if self.verbose:
+            num_edges = len(parent_nodes)
+            print(f"done ({num_edges:,} edges, depth {max_depth})")
 
     def get_current_strategy(self) -> Tensor:
         """
