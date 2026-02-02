@@ -38,8 +38,9 @@ ANSI_DARKEST_RED = "\033[38;5;124m"
 # Brightness threshold
 BRIGHT_THRESHOLD = 0.85
 
-# Cell width in characters (10 = each column represents 10% frequency)
-CELL_WIDTH = 10
+# Cell dimensions (5 wide x 4 tall approximates square in terminal due to ~2:1 char aspect ratio)
+CELL_WIDTH = 5
+CELL_HEIGHT = 4
 
 
 def get_raise_color(raise_size: float, raise_sizes: List[float]) -> str:
@@ -187,9 +188,8 @@ def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Opti
     """
     Render a single cell with frequency-based background segments.
 
-    Each cell has a 1px black border. The hand name appears in the upper-left
-    corner inside the border. The content area shows action frequencies as
-    colored segments.
+    Cell has no border (borders are added between cells by render_matrix).
+    Hand name appears in the upper-left corner.
 
     Args:
         hand: Hand name (e.g., "AA", "AKs", "72o")
@@ -199,30 +199,14 @@ def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Opti
     Returns:
         List of ANSI-formatted strings, one per row of the cell
     """
-    # Cell structure: 1px border on all sides
-    # Content area is (CELL_WIDTH - 2) x (CELL_WIDTH - 2)
-    content_width = CELL_WIDTH - 2
+    # Pad hand to cell width for the label row
+    padded_hand = f"{hand:<{CELL_WIDTH}}"
+    blank_row = " " * CELL_WIDTH
 
-    # Hand name goes in upper-left of content (row 1, starting at col 1)
-    # Pad hand to content width for the label row
-    padded_hand = f"{hand:<{content_width}}"
-    blank_content = " " * content_width
-
-    # Create border row (all black)
-    border_row = f"{BG_BLACK}{ANSI_WHITE_FG}{' ' * CELL_WIDTH}{ANSI_RESET}"
-
-    def make_content_row(text: str, column_colors: List[str]) -> str:
-        """Build a row with black border on left/right and colored content."""
-        chars = [f"{BG_BLACK}{ANSI_WHITE_FG} "]  # Left border
-        for i in range(content_width):
-            chars.append(f"{column_colors[i]}{ANSI_WHITE_FG}{text[i]}")
-        chars.append(f"{BG_BLACK}{ANSI_WHITE_FG} {ANSI_RESET}")  # Right border
-        return "".join(chars)
-
-    # Determine content colors
+    # Determine content colors for each column
     if dist is None or not dist.get_action_segments(raise_sizes):
-        # No strategy - gray background for content
-        content_colors = [BG_GRAY] * content_width
+        # No strategy - gray background
+        column_colors = [BG_GRAY] * CELL_WIDTH
     else:
         # Build cumulative frequency ranges
         segments = dist.get_action_segments(raise_sizes)
@@ -232,10 +216,10 @@ def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Opti
             cumulative.append((action, total, total + freq))
             total += freq
 
-        # Pre-compute background color for each content column
-        content_colors = []
-        for i in range(content_width):
-            midpoint = (i + 0.5) / content_width
+        # Pre-compute background color for each column
+        column_colors = []
+        for i in range(CELL_WIDTH):
+            midpoint = (i + 0.5) / CELL_WIDTH
             scaled_pos = midpoint * total if total > 0 else 0
 
             bg_color = BG_GRAY
@@ -246,20 +230,16 @@ def render_cell(hand: str, dist: Optional[ActionDistribution], raise_sizes: Opti
             else:
                 if cumulative:
                     bg_color = get_bg_color_for_action(cumulative[-1][0], raise_sizes)
-            content_colors.append(bg_color)
+            column_colors.append(bg_color)
 
     # Generate rows
     rows = []
-    for row_idx in range(CELL_WIDTH):
-        if row_idx == 0 or row_idx == CELL_WIDTH - 1:
-            # Top or bottom border
-            rows.append(border_row)
-        elif row_idx == 1:
-            # Hand name row (upper-left)
-            rows.append(make_content_row(padded_hand, content_colors))
-        else:
-            # Content rows (blank text, colored background)
-            rows.append(make_content_row(blank_content, content_colors))
+    for row_idx in range(CELL_HEIGHT):
+        text = padded_hand if row_idx == 0 else blank_row
+        row_chars = []
+        for i in range(CELL_WIDTH):
+            row_chars.append(f"{column_colors[i]}{ANSI_WHITE_FG}{text[i]}")
+        rows.append("".join(row_chars) + ANSI_RESET)
 
     return rows
 
@@ -348,7 +328,7 @@ def render_matrix(
     """
     Render a 13x13 strategy matrix with color-coded cells and legend.
 
-    Each cell is CELL_WIDTH x CELL_WIDTH characters (square cells).
+    Cells are separated by thin 1-character black borders.
 
     Args:
         strategy: Dictionary mapping hand names to ActionDistribution
@@ -368,11 +348,23 @@ def render_matrix(
 
     # Track which legend line to add next
     legend_idx = 0
-    matrix_width = CELL_WIDTH * 13  # 13 columns of cells
 
-    # Render each row of the matrix (each hand row spans CELL_WIDTH terminal lines)
-    for row in layout:
-        # Render all cells for this row (each returns CELL_WIDTH lines)
+    # Black separator between columns (1 character)
+    col_sep = f"{BG_BLACK} {ANSI_RESET}"
+
+    # Matrix width: 13 cells + 12 separators
+    matrix_width = CELL_WIDTH * 13 + 12
+
+    # Create horizontal separator row (all black, full width)
+    h_sep_row = f"{BG_BLACK}{ANSI_WHITE_FG}{' ' * matrix_width}{ANSI_RESET}"
+
+    # Render each row of the matrix
+    for row_idx, row in enumerate(layout):
+        # Add horizontal separator before each row (except first)
+        if row_idx > 0:
+            matrix_lines.append(h_sep_row)
+
+        # Render all cells for this row
         cell_rows: List[List[str]] = []
         for hand in row:
             dist = strategy.get(hand)
@@ -380,11 +372,12 @@ def render_matrix(
             cell_rows.append(cell_lines)
 
         # Combine cells horizontally for each terminal line
-        for line_idx in range(CELL_WIDTH):
-            row_str = "".join(cell[line_idx] for cell in cell_rows)
+        for line_idx in range(CELL_HEIGHT):
+            # Join cells with black separator
+            row_str = col_sep.join(cell[line_idx] for cell in cell_rows)
 
-            # Add legend line if available (on middle line of cell for alignment)
-            if line_idx == CELL_WIDTH // 2 and legend_idx < len(legend_lines):
+            # Add legend line if available (on first line of cell for alignment)
+            if line_idx == 0 and legend_idx < len(legend_lines):
                 row_str += legend_lines[legend_idx]
                 legend_idx += 1
 
