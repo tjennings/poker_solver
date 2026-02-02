@@ -12,45 +12,52 @@ class TestConfig:
     """Tests for Config dataclass."""
 
     def test_config_creation(self):
-        """Test basic Config creation."""
-        config = Config(name="Test", stack_depth=100, raise_sizes=[2.5, 3, 8])
+        """Test basic Config creation with stack_depths list."""
+        config = Config(name="Test", stack_depths=[100], raise_sizes=[2.5, 3, 8])
         assert config.name == "Test"
-        assert config.stack_depth == 100
+        assert config.stack_depths == [100]
+        assert config.stack_depth == 100  # Backward-compatible property
         assert config.raise_sizes == [2.5, 3, 8]
+
+    def test_config_creation_multi_stack(self):
+        """Test Config creation with multiple stack depths."""
+        config = Config(name="Test", stack_depths=[25, 50, 100], raise_sizes=[2.5, 3, 8])
+        assert config.stack_depths == [25, 50, 100]
+        assert config.stack_depth == 25  # Returns first stack
 
     def test_legal_raises_at_open(self):
         """Test get_legal_raise_sizes when opening (current_bet=0)."""
-        config = Config(name="Test", stack_depth=100, raise_sizes=[2.5, 3, 8, 20, 50, 100, 200])
+        config = Config(name="Test", stack_depths=[100], raise_sizes=[2.5, 3, 8, 20, 50, 100, 200])
         legal = config.get_legal_raise_sizes(current_bet=0, stack=100)
         assert legal == [2.5, 3, 8, 20, 50, 100]  # 200 exceeds stack
 
     def test_legal_raises_facing_bet(self):
         """Test get_legal_raise_sizes when facing a bet."""
-        config = Config(name="Test", stack_depth=100, raise_sizes=[2.5, 3, 8, 20])
+        config = Config(name="Test", stack_depths=[100], raise_sizes=[2.5, 3, 8, 20])
         legal = config.get_legal_raise_sizes(current_bet=8, stack=100)
         assert legal == [20]  # Only 20 > 8
 
     def test_legal_raises_all_below_current_bet(self):
         """Test when all raise sizes are below current bet."""
-        config = Config(name="Test", stack_depth=100, raise_sizes=[2.5, 3, 8])
+        config = Config(name="Test", stack_depths=[100], raise_sizes=[2.5, 3, 8])
         legal = config.get_legal_raise_sizes(current_bet=10, stack=100)
         assert legal == []
 
     def test_legal_raises_all_above_stack(self):
         """Test when all raise sizes exceed remaining stack."""
-        config = Config(name="Test", stack_depth=100, raise_sizes=[50, 100, 200])
+        config = Config(name="Test", stack_depths=[100], raise_sizes=[50, 100, 200])
         legal = config.get_legal_raise_sizes(current_bet=0, stack=40)
         assert legal == []
 
     def test_legal_raises_exact_stack(self):
         """Test that raise size equal to stack is included."""
-        config = Config(name="Test", stack_depth=100, raise_sizes=[50, 100])
+        config = Config(name="Test", stack_depths=[100], raise_sizes=[50, 100])
         legal = config.get_legal_raise_sizes(current_bet=0, stack=100)
         assert legal == [50, 100]
 
     def test_legal_raises_equal_to_current_bet_excluded(self):
         """Test that raise size equal to current bet is excluded."""
-        config = Config(name="Test", stack_depth=100, raise_sizes=[8, 20])
+        config = Config(name="Test", stack_depths=[100], raise_sizes=[8, 20])
         legal = config.get_legal_raise_sizes(current_bet=8, stack=100)
         assert legal == [20]  # 8 is not > 8, so excluded
 
@@ -66,7 +73,7 @@ class TestLoadConfig:
         assert 2.5 in config.raise_sizes
 
     def test_load_config_with_all_fields(self):
-        """Test loading config with all fields specified."""
+        """Test loading config with all fields specified (legacy format)."""
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
             f.write("""
 name: "Test Config"
@@ -78,7 +85,26 @@ raise_sizes: [2, 3, 4]
                 config = load_config(f.name)
                 assert config.name == "Test Config"
                 assert config.stack_depth == 50
+                assert config.stack_depths == [50]
                 assert config.raise_sizes == [2, 3, 4]
+            finally:
+                os.unlink(f.name)
+
+    def test_load_config_with_stack_depths(self):
+        """Test loading config with new stack_depths format."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write("""
+name: "Multi Stack"
+stack_depths: [25, 50, 100]
+raise_sizes: [2, 3, 8]
+""")
+            f.flush()
+            try:
+                config = load_config(f.name)
+                assert config.name == "Multi Stack"
+                assert config.stack_depths == [25, 50, 100]
+                assert config.stack_depth == 25  # First stack
+                assert config.raise_sizes == [2, 3, 8]
             finally:
                 os.unlink(f.name)
 
@@ -98,7 +124,7 @@ raise_sizes: [2.5, 5, 10]
                 os.unlink(f.name)
 
     def test_validation_missing_stack(self):
-        """Test that missing stack_depth raises ValueError."""
+        """Test that missing stack_depth/stack_depths raises ValueError."""
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
             f.write("""
 name: "Invalid"

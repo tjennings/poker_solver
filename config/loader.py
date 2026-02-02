@@ -13,12 +13,17 @@ class Config:
 
     Attributes:
         name: Human-readable name for this configuration.
-        stack_depth: Stack depth in big blinds.
+        stack_depths: List of stack depths in big blinds.
         raise_sizes: List of raise sizes in big blinds.
     """
     name: str
-    stack_depth: float
+    stack_depths: List[float]
     raise_sizes: List[float]
+
+    @property
+    def stack_depth(self) -> float:
+        """Backward compatibility: return first stack depth."""
+        return self.stack_depths[0]
 
     def get_legal_raise_sizes(self, current_bet: float, stack: float) -> List[float]:
         """Get raise sizes that are legal given current bet and stack.
@@ -60,20 +65,39 @@ def load_config(path: str) -> Config:
     if not isinstance(data, dict):
         raise ValueError("Config file must contain a YAML mapping (dict), not a scalar or list")
 
-    # Validate required fields
-    if 'stack_depth' not in data:
-        raise ValueError("Missing required field: stack_depth")
+    # Validate required fields - accept either stack_depth or stack_depths
+    has_stack_depth = 'stack_depth' in data
+    has_stack_depths = 'stack_depths' in data
+    if not has_stack_depth and not has_stack_depths:
+        raise ValueError("Missing required field: stack_depth or stack_depths")
     if 'raise_sizes' not in data:
         raise ValueError("Missing required field: raise_sizes")
 
-    # Validate stack_depth type and value
-    try:
-        stack_depth = float(data['stack_depth'])
-    except (TypeError, ValueError):
-        raise ValueError(f"stack_depth must be a number, got: {type(data['stack_depth']).__name__}")
-
-    if stack_depth <= 0:
-        raise ValueError(f"stack_depth must be positive, got: {stack_depth}")
+    # Parse stack_depths - support both singular and plural forms
+    if has_stack_depths:
+        # New format: stack_depths: [25, 50, 100]
+        if not isinstance(data['stack_depths'], list):
+            raise ValueError(f"stack_depths must be a list, got: {type(data['stack_depths']).__name__}")
+        stack_depths = []
+        for i, s in enumerate(data['stack_depths']):
+            try:
+                depth = float(s)
+            except (TypeError, ValueError):
+                raise ValueError(f"stack_depths[{i}] must be a number, got: {type(s).__name__}")
+            if depth <= 0:
+                raise ValueError(f"stack_depths[{i}] must be positive, got: {depth}")
+            stack_depths.append(depth)
+        if not stack_depths:
+            raise ValueError("stack_depths cannot be empty")
+    else:
+        # Old format: stack_depth: 100 (backward compatibility)
+        try:
+            stack_depth = float(data['stack_depth'])
+        except (TypeError, ValueError):
+            raise ValueError(f"stack_depth must be a number, got: {type(data['stack_depth']).__name__}")
+        if stack_depth <= 0:
+            raise ValueError(f"stack_depth must be positive, got: {stack_depth}")
+        stack_depths = [stack_depth]
 
     # Validate raise_sizes is a list
     if not isinstance(data['raise_sizes'], list):
@@ -95,7 +119,7 @@ def load_config(path: str) -> Config:
 
     return Config(
         name=name,
-        stack_depth=stack_depth,
+        stack_depths=stack_depths,
         raise_sizes=raise_sizes,
     )
 

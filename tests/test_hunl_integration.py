@@ -42,7 +42,7 @@ def small_config():
     """Minimal config for fast integration tests."""
     return Config(
         name="Integration Test",
-        stack_depth=10.0,
+        stack_depths=[10.0],
         raise_sizes=[2.5, 5.0, 10.0],
     )
 

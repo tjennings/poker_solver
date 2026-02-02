@@ -68,6 +68,13 @@ def parse_user_input(user_input: str) -> Tuple[str, Optional[str]]:
         if raise_match:
             return ("action", cleaned)
 
+    # Stack switch (sX or sX.X)
+    if cleaned.startswith("s") and len(cleaned) > 1:
+        # Validate it has a numeric value after 's'
+        stack_match = re.match(r"^s(\d+(?:\.\d+)?)$", cleaned)
+        if stack_match:
+            return ("switch_stack", stack_match.group(1))
+
     # Invalid input
     return ("invalid", user_input.strip())
 
@@ -81,22 +88,69 @@ class InteractiveSession:
     Attributes:
         config: Game configuration
         raw_strategy: Full strategy dictionary from solver (keyed by info_set_key)
+            Can be flat format {info_set: probs} or nested {stack: {info_set: probs}}
         history: List of actions taken in current exploration
-        stack: Stack size from config
+        stack: Current stack size being explored
+        available_stacks: List of stack depths available for exploration
+        current_stack: Currently selected stack depth
     """
 
     def __init__(self, config: Config, raw_strategy: Dict):
         """Initialize an interactive session.
 
         Args:
-            config: Configuration with stack_depth and raise_sizes
+            config: Configuration with stack_depths and raise_sizes
             raw_strategy: Full strategy dictionary from solver with keys like
-                "SB:AA:r2.5-r8" mapping to action probabilities
+                "SB:AA:r2.5-r8" mapping to action probabilities.
+                Can be flat format or nested {stack: {info_set: probs}} format.
         """
         self.config = config
-        self.raw_strategy = raw_strategy
         self.history: List[str] = []
-        self.stack: float = config.stack_depth
+
+        # Detect strategy format and set up multi-stack support
+        self._is_multi_stack = self._detect_multi_stack(raw_strategy)
+        if self._is_multi_stack:
+            # Nested format: {stack: {info_set: probs}}
+            self._multi_stack_strategy = raw_strategy
+            self.available_stacks = sorted(raw_strategy.keys())
+            self.current_stack = self.available_stacks[0]
+            self.raw_strategy = raw_strategy[self.current_stack]
+        else:
+            # Flat format: {info_set: probs} - single stack
+            self._multi_stack_strategy = None
+            self.available_stacks = config.stack_depths.copy()
+            self.current_stack = config.stack_depth
+            self.raw_strategy = raw_strategy
+
+        self.stack: float = self.current_stack
+
+    def _detect_multi_stack(self, strategy: Dict) -> bool:
+        """Detect if strategy is in multi-stack nested format."""
+        if not strategy:
+            return False
+        first_key = next(iter(strategy.keys()))
+        return isinstance(first_key, (int, float))
+
+    def switch_stack(self, stack: float) -> bool:
+        """Switch to a different stack depth.
+
+        Args:
+            stack: Stack depth to switch to
+
+        Returns:
+            True if switch was successful, False if stack not available
+        """
+        if not self._is_multi_stack:
+            return False
+
+        if stack not in self.available_stacks:
+            return False
+
+        self.current_stack = stack
+        self.stack = stack
+        self.raw_strategy = self._multi_stack_strategy[stack]
+        self.history = []  # Reset history when switching stacks
+        return True
 
     def apply_action(self, action: str) -> None:
         """Apply an action to the current state.
@@ -432,7 +486,7 @@ def run_interactive(
 
     Args:
         config: Game configuration
-        strategy: Strategy dictionary
+        strategy: Strategy dictionary (flat or nested multi-stack format)
         initial_actions: Optional tuple of actions to pre-apply to the session
     """
     session = InteractiveSession(config, strategy)
@@ -448,7 +502,12 @@ def run_interactive(
         if session.is_terminal():
             print("Terminal state reached. Press 'b' to go back or 'q' to quit.")
 
-        print("Enter action (f/c/rX/a), 'b' to go back, 'q' to quit:")
+        # Build prompt with stack switching info if multi-stack
+        if session._is_multi_stack and len(session.available_stacks) > 1:
+            stacks_str = ", ".join(f"s{int(s) if s == int(s) else s}" for s in session.available_stacks)
+            print(f"Enter action (f/c/rX/a), 'b' to go back, 'q' to quit, or switch stack ({stacks_str}):")
+        else:
+            print("Enter action (f/c/rX/a), 'b' to go back, 'q' to quit:")
         user_input = input("> ")
 
         command, value = parse_user_input(user_input)
@@ -459,6 +518,19 @@ def run_interactive(
         elif command == "back":
             if not session.go_back():
                 print("Already at root position.")
+        elif command == "switch_stack":
+            if not session._is_multi_stack:
+                print("Stack switching not available (single stack strategy).")
+            else:
+                try:
+                    target_stack = float(value)
+                    if session.switch_stack(target_stack):
+                        print(f"Switched to {target_stack}BB stack.")
+                    else:
+                        available = ", ".join(str(int(s) if s == int(s) else s) for s in session.available_stacks)
+                        print(f"Stack {target_stack}BB not available. Available: {available}")
+                except ValueError:
+                    print(f"Invalid stack value: {value}")
         elif command == "action":
             if session.is_terminal():
                 print("Cannot take action in terminal state. Go back first.")

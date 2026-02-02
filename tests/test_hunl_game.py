@@ -11,7 +11,7 @@ def config():
     """Standard 100BB config for testing."""
     return Config(
         name="Test",
-        stack_depth=100,
+        stack_depths=[100],
         raise_sizes=[2.5, 3, 8, 20, 50, 100]
     )
 
@@ -216,7 +216,7 @@ class TestHUNLPreflopActions:
     def test_all_in_excluded_when_stack_already_committed(self, game):
         """All-in shouldn't appear if raise equals stack."""
         # Create config where max raise = stack
-        config = Config(name="Test", stack_depth=50, raise_sizes=[25, 50])
+        config = Config(name="Test", stack_depths=[50], raise_sizes=[25, 50])
         game = HUNLPreflop(config)
         state = HUNLState(hands=(0, 1), history=(), stack=50, pot=1.5, to_act=0)
         actions = game.actions(state)

@@ -14,7 +14,7 @@ def config():
     """Create a basic config for testing."""
     return Config(
         name="Test",
-        stack_depth=100.0,
+        stack_depths=[100.0],
         raise_sizes=[2.5, 3.0, 8.0, 20.0],
     )
 
@@ -888,7 +888,7 @@ class TestSmallStackScenarios:
         """Create a config with small stack (10 BB)."""
         return Config(
             name="Small",
-            stack_depth=10.0,
+            stack_depths=[10.0],
             raise_sizes=[2.5, 3.0, 5.0],
         )
 
@@ -996,3 +996,133 @@ class TestTerminalStateValidation:
         assert session.is_terminal() is True
         session.go_back()
         assert session.is_terminal() is False
+
+
+class TestParseStackSwitch:
+    """Tests for stack switching command parsing."""
+
+    def test_parse_stack_switch_integer(self):
+        """'s25' should parse as switch_stack command."""
+        from cli.interactive import parse_user_input
+
+        assert parse_user_input("s25") == ("switch_stack", "25")
+
+    def test_parse_stack_switch_decimal(self):
+        """'s2.5' should parse as switch_stack command."""
+        from cli.interactive import parse_user_input
+
+        assert parse_user_input("s2.5") == ("switch_stack", "2.5")
+
+    def test_parse_stack_switch_large(self):
+        """'s100' should parse as switch_stack command."""
+        from cli.interactive import parse_user_input
+
+        assert parse_user_input("s100") == ("switch_stack", "100")
+
+    def test_parse_stack_switch_case_insensitive(self):
+        """'S50' should parse as switch_stack command."""
+        from cli.interactive import parse_user_input
+
+        assert parse_user_input("S50") == ("switch_stack", "50")
+
+
+class TestMultiStackSession:
+    """Tests for multi-stack InteractiveSession functionality."""
+
+    @pytest.fixture
+    def multi_stack_config(self):
+        """Create a config with multiple stack depths."""
+        return Config(
+            name="Multi",
+            stack_depths=[25.0, 50.0, 100.0],
+            raise_sizes=[2.5, 3.0, 8.0, 20.0],
+        )
+
+    @pytest.fixture
+    def multi_stack_strategy(self):
+        """Create a multi-stack strategy in nested format."""
+        return {
+            25.0: {
+                "SB:AA:": {"f": 0.0, "c": 0.0, "r3.0": 0.9, "a": 0.1},
+                "SB:72o:": {"f": 0.9, "c": 0.1},
+            },
+            50.0: {
+                "SB:AA:": {"f": 0.0, "c": 0.1, "r3.0": 0.8, "a": 0.1},
+                "SB:72o:": {"f": 0.85, "c": 0.15},
+            },
+            100.0: {
+                "SB:AA:": {"f": 0.0, "c": 0.2, "r3.0": 0.7, "a": 0.1},
+                "SB:72o:": {"f": 0.8, "c": 0.2},
+            },
+        }
+
+    def test_multi_stack_detection(self, multi_stack_config, multi_stack_strategy):
+        """Session should detect multi-stack format."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(multi_stack_config, multi_stack_strategy)
+        assert session._is_multi_stack is True
+        assert session.available_stacks == [25.0, 50.0, 100.0]
+
+    def test_single_stack_detection(self, config, sample_strategy):
+        """Session should detect single-stack format."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, sample_strategy)
+        assert session._is_multi_stack is False
+
+    def test_initial_stack_is_first(self, multi_stack_config, multi_stack_strategy):
+        """Initial current_stack should be the first available."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(multi_stack_config, multi_stack_strategy)
+        assert session.current_stack == 25.0
+        assert session.stack == 25.0
+
+    def test_switch_stack_success(self, multi_stack_config, multi_stack_strategy):
+        """switch_stack should work for valid stack."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(multi_stack_config, multi_stack_strategy)
+        result = session.switch_stack(50.0)
+        assert result is True
+        assert session.current_stack == 50.0
+        assert session.stack == 50.0
+
+    def test_switch_stack_updates_strategy(self, multi_stack_config, multi_stack_strategy):
+        """switch_stack should update raw_strategy to new stack's strategy."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(multi_stack_config, multi_stack_strategy)
+        session.switch_stack(100.0)
+        # Check that raw_strategy is now the 100BB strategy
+        assert session.raw_strategy == multi_stack_strategy[100.0]
+
+    def test_switch_stack_resets_history(self, multi_stack_config, multi_stack_strategy):
+        """switch_stack should reset action history."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(multi_stack_config, multi_stack_strategy)
+        session.apply_action("r3")
+        session.apply_action("c")
+        assert len(session.history) == 2
+
+        session.switch_stack(50.0)
+        assert session.history == []
+
+    def test_switch_stack_invalid_stack(self, multi_stack_config, multi_stack_strategy):
+        """switch_stack should fail for invalid stack."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(multi_stack_config, multi_stack_strategy)
+        result = session.switch_stack(75.0)  # Not in available stacks
+        assert result is False
+        assert session.current_stack == 25.0  # Unchanged
+
+    def test_switch_stack_not_multi_stack(self, config, sample_strategy):
+        """switch_stack should fail for single-stack strategy."""
+        from cli.interactive import InteractiveSession
+
+        session = InteractiveSession(config, sample_strategy)
+        result = session.switch_stack(50.0)
+        assert result is False

@@ -48,6 +48,8 @@ class TestHUNLCLIPresets:
                 "10",
                 "--batch-size",
                 "1",
+                "--stack",
+                "25",  # Train only 25BB stack for speed
                 "--no-interactive",
                 "--quiet",
             ],
@@ -94,6 +96,8 @@ class TestHUNLCLIOptions:
                 "cpu",
                 "--batch-size",
                 "1",
+                "--stack",
+                "25",  # Train only 25BB stack for speed
                 "--no-interactive",
                 "--quiet",
             ],
@@ -121,6 +125,8 @@ class TestHUNLCLIOptions:
                 "100",
                 "--batch-size",
                 "512",
+                "--stack",
+                "25",  # Train only 25BB stack for speed
                 "--no-interactive",
                 "--quiet",
             ],
@@ -143,6 +149,8 @@ class TestHUNLCLIOptions:
                 "10",
                 "--batch-size",
                 "1",
+                "--stack",
+                "25",  # Train only 25BB stack for speed
                 "--action",
                 "SBr2.5",
                 "--no-interactive",
@@ -167,6 +175,8 @@ class TestHUNLCLIOptions:
                 "10",
                 "--batch-size",
                 "1",
+                "--stack",
+                "25",  # Train only 25BB stack for speed
                 "--action",
                 "5bb SBr2.5",
                 "--no-interactive",

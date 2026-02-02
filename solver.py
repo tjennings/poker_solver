@@ -125,27 +125,79 @@ class Solver:
         """Compute exploitability of current strategy."""
         return compute_exploitability(self.game, self.get_strategy())
 
-    def save_strategy(self, path: str) -> None:
+    def save_strategy(self, path: str, stack_depth: Optional[float] = None) -> None:
         """
         Save strategy to compressed file.
 
         Args:
             path: File path (recommended: .strategy.gz extension)
+            stack_depth: If provided, saves as nested format {stack: strategy}.
+                        If None, saves flat format for backward compatibility.
         """
         strategy = self.get_strategy()
+        if stack_depth is not None:
+            # Nested format for multi-stack support
+            strategy = {stack_depth: strategy}
         with gzip.open(path, "wb", compresslevel=6) as f:
             pickle.dump(strategy, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     @staticmethod
-    def load_strategy(path: str) -> Dict[str, Dict[str, float]]:
+    def load_strategy(path: str) -> Dict:
         """
         Load strategy from compressed file.
+
+        Auto-detects format:
+        - Nested format: {float: {info_set: probs}} for multi-stack
+        - Flat format: {info_set: probs} for single-stack (legacy)
 
         Args:
             path: File path to load from
 
         Returns:
-            Strategy dictionary
+            Strategy dictionary (nested or flat depending on file format)
         """
         with gzip.open(path, "rb") as f:
-            return pickle.load(f)
+            data = pickle.load(f)
+
+        # Auto-detect format by checking first key type
+        if data:
+            first_key = next(iter(data.keys()))
+            if isinstance(first_key, (int, float)):
+                # Nested format: {stack_depth: {info_set: probs}}
+                return data
+            else:
+                # Flat format (legacy): {info_set: probs}
+                return data
+
+        return data
+
+    @staticmethod
+    def save_multi_stack_strategy(
+        path: str,
+        strategies: Dict[float, Dict[str, Dict[str, float]]]
+    ) -> None:
+        """
+        Save multiple stack strategies to a single compressed file.
+
+        Args:
+            path: File path (recommended: .gz extension)
+            strategies: Dict mapping stack depth to strategy dict
+        """
+        with gzip.open(path, "wb", compresslevel=6) as f:
+            pickle.dump(strategies, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    @staticmethod
+    def is_multi_stack_strategy(strategy: Dict) -> bool:
+        """
+        Check if a strategy dict is in multi-stack (nested) format.
+
+        Args:
+            strategy: Strategy dictionary to check
+
+        Returns:
+            True if nested format {stack: {info_set: probs}}, False if flat
+        """
+        if not strategy:
+            return False
+        first_key = next(iter(strategy.keys()))
+        return isinstance(first_key, (int, float))

@@ -69,6 +69,7 @@ def run_hunl(args):
     from games.hunl_preflop import HUNLPreflop
     from cli.parser import parse_action_sequence
     from cli.interactive import run_interactive
+    from dataclasses import replace
 
     # Load config (preset or file)
     config_path = args.config
@@ -91,17 +92,26 @@ def run_hunl(args):
         print(f"Error loading config: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Parse action sequence if provided (may override stack)
+    # Filter stack depths if --stack is provided
+    if hasattr(args, 'stack') and args.stack:
+        requested_stacks = [float(s) for s in args.stack]
+        invalid_stacks = [s for s in requested_stacks if s not in config.stack_depths]
+        if invalid_stacks:
+            available = ", ".join(str(int(s) if s == int(s) else s) for s in config.stack_depths)
+            print(f"Error: Stack(s) {invalid_stacks} not in config. Available: {available}", file=sys.stderr)
+            sys.exit(1)
+        config = replace(config, stack_depths=requested_stacks)
+
+    # Parse action sequence if provided (may override stack for interactive)
     initial_actions = ()
+    interactive_stack = None
     if args.action:
         try:
             parsed = parse_action_sequence(args.action)
             initial_actions = parsed.to_history_tuple()
-            # Apply stack override if present
+            # Apply stack override if present (for interactive only)
             if parsed.stack_override is not None:
-                # Create a new config with the overridden stack
-                from dataclasses import replace
-                config = replace(config, stack_depth=parsed.stack_override)
+                interactive_stack = parsed.stack_override
         except ValueError as e:
             print(f"Error parsing action sequence: {e}", file=sys.stderr)
             sys.exit(1)
@@ -117,7 +127,13 @@ def run_hunl(args):
         try:
             strategy = Solver.load_strategy(args.load)
             if not args.quiet:
-                print(f"Loaded {len(strategy):,} information sets")
+                if Solver.is_multi_stack_strategy(strategy):
+                    stacks = sorted(strategy.keys())
+                    total_info_sets = sum(len(s) for s in strategy.values())
+                    stacks_str = ", ".join(str(int(s) if s == int(s) else s) for s in stacks)
+                    print(f"Loaded {total_info_sets:,} information sets across {len(stacks)} stacks: {stacks_str}BB")
+                else:
+                    print(f"Loaded {len(strategy):,} information sets")
                 print()
         except FileNotFoundError:
             print(f"Error: Strategy file not found: {args.load}", file=sys.stderr)
@@ -126,12 +142,20 @@ def run_hunl(args):
             print(f"Error loading strategy: {e}", file=sys.stderr)
             sys.exit(1)
     else:
+        # Train for all configured stack depths
+        stack_depths = config.stack_depths
+        multi_stack = len(stack_depths) > 1
+
         if not args.quiet:
             print("=" * 50)
             print("CFR Poker Solver - HUNL Preflop")
             print("=" * 50)
             print(f"Config: {config.name}")
-            print(f"Stack depth: {config.stack_depth} BB")
+            if multi_stack:
+                stacks_str = ", ".join(str(int(s) if s == int(s) else s) for s in stack_depths)
+                print(f"Stack depths: {stacks_str} BB")
+            else:
+                print(f"Stack depth: {stack_depths[0]} BB")
             print(f"Raise sizes: {config.raise_sizes}")
             print(f"Iterations: {args.iterations}")
             print(f"Device: {args.device}")
@@ -140,52 +164,89 @@ def run_hunl(args):
                 print(f"Initial actions: {' -> '.join(initial_actions)}")
             print()
 
-        # Create game and solver
-        game = HUNLPreflop(config)
-        solver = Solver(
-            game=game,
-            device=args.device,
-            batch_size=args.batch_size,
-            verbose=not args.quiet,
-            max_memory_gb=args.max_memory,
-        )
+        # Train each stack sequentially
+        all_strategies = {}
+        total_start_time = time.time()
 
-        # Train
-        start_time = time.time()
-        strategy = solver.solve(
-            iterations=args.iterations,
-            verbose=not args.quiet,
-        )
-        elapsed = time.time() - start_time
+        for i, stack_depth in enumerate(stack_depths):
+            if multi_stack and not args.quiet:
+                print(f"[{i+1}/{len(stack_depths)}] Training {int(stack_depth) if stack_depth == int(stack_depth) else stack_depth}BB stack...")
+                print("-" * 40)
 
-        # Results
-        if not args.quiet:
-            print()
+            # Create config for this stack depth
+            single_stack_config = replace(config, stack_depths=[stack_depth])
+
+            # Create game and solver
+            game = HUNLPreflop(single_stack_config)
+            solver = Solver(
+                game=game,
+                device=args.device,
+                batch_size=args.batch_size,
+                verbose=not args.quiet,
+                max_memory_gb=args.max_memory,
+            )
+
+            # Train
+            start_time = time.time()
+            stack_strategy = solver.solve(
+                iterations=args.iterations,
+                verbose=not args.quiet,
+            )
+            elapsed = time.time() - start_time
+
+            all_strategies[stack_depth] = stack_strategy
+
+            # Results for this stack
+            if not args.quiet:
+                print()
+                if multi_stack:
+                    print(f"[{int(stack_depth) if stack_depth == int(stack_depth) else stack_depth}BB] ", end="")
+                print(f"Time: {elapsed:.2f}s | Exploitability: {solver.exploitability():.6f}")
+                print()
+
+        total_elapsed = time.time() - total_start_time
+
+        # Final summary for multi-stack
+        if multi_stack and not args.quiet:
             print("=" * 50)
-            print("Results")
+            print("Training Complete")
             print("=" * 50)
-            print(f"Time: {elapsed:.2f} seconds")
-            print(f"Iterations/sec: {args.iterations / elapsed:.0f}")
-            print(f"Final exploitability: {solver.exploitability():.6f}")
+            print(f"Total time: {total_elapsed:.2f} seconds")
             print()
+
+        # Use nested format for multi-stack, flat for single
+        if multi_stack:
+            strategy = all_strategies
+        else:
+            strategy = all_strategies[stack_depths[0]]
 
         # Save strategy if requested
         if args.save:
-            solver.save_strategy(args.save)
+            if multi_stack:
+                Solver.save_multi_stack_strategy(args.save, all_strategies)
+            else:
+                solver.save_strategy(args.save)
             if not args.quiet:
                 size_mb = os.path.getsize(args.save) / (1024 * 1024)
                 print(f"Strategy saved to: {args.save} ({size_mb:.1f} MB)")
                 print()
 
     # Enter interactive mode unless disabled
-    # Pass raw strategy - InteractiveSession filters dynamically based on history
+    # For loaded strategies, check if we need to filter to a specific stack
+    if interactive_stack is not None and Solver.is_multi_stack_strategy(strategy):
+        if interactive_stack in strategy:
+            # Start with the requested stack selected
+            pass  # InteractiveSession will handle this
+        else:
+            available = sorted(strategy.keys())
+            available_str = ", ".join(str(int(s) if s == int(s) else s) for s in available)
+            print(f"Warning: Requested stack {interactive_stack}BB not in strategy. Available: {available_str}")
+
     if not args.no_interactive:
         run_interactive(config, strategy, initial_actions=initial_actions)
     else:
         if not args.quiet:
             print("Training complete. Use --no-interactive to skip interactive mode.")
-        else:
-            print(f"Training complete. Exploitability: {solver.exploitability():.6f}")
 
 
 def add_kuhn_args(parser):
@@ -275,6 +336,13 @@ def add_hunl_args(parser):
         type=str,
         metavar="FILE",
         help="Load pre-trained strategy from file (skips training)"
+    )
+    parser.add_argument(
+        "--stack",
+        type=float,
+        nargs="+",
+        metavar="DEPTH",
+        help="Train only specific stack depth(s) from config (e.g., --stack 25 50)"
     )
 
 

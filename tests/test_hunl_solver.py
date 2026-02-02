@@ -11,7 +11,7 @@ def small_config():
     """Minimal config for fast tests."""
     return Config(
         name="Test",
-        stack_depth=5.0,  # Very shallow for fast iteration
+        stack_depths=[5.0],  # Very shallow for fast iteration
         raise_sizes=[2.5, 3.0],  # Only 2 raise sizes
     )
 
