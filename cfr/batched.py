@@ -173,7 +173,9 @@ class BatchedCFR:
         positive_regrets = torch.clamp(self.regret_sum, min=0)
         totals = positive_regrets.sum(dim=1, keepdim=True)
 
-        uniform = torch.ones_like(positive_regrets) / self.compiled.max_actions
+        # Uniform fallback: 1/num_valid_actions for each info set (not 1/max_actions)
+        num_actions = self.compiled.info_set_num_actions[:, None]  # [num_info_sets, 1]
+        uniform = torch.ones_like(positive_regrets) / num_actions.clamp(min=1)
         strategy = torch.where(
             totals > 0,
             positive_regrets / totals.clamp(min=1e-10),

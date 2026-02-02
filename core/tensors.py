@@ -33,6 +33,7 @@ class CompiledGame:
     info_set_to_idx: Dict[str, int]
     idx_to_info_set: Dict[int, str]
     info_set_actions: Dict[str, List[str]]  # Action names per info set
+    info_set_num_actions: Tensor  # Number of valid actions per info set [num_info_sets]
 
     # Dimensions
     num_info_sets: int
@@ -158,6 +159,14 @@ def compile_game(
     if verbose:
         print(f"done ({num_nodes:,} nodes)")
 
+    # Build info set num_actions tensor
+    num_info_sets = len(info_set_to_idx)
+    info_set_num_actions_list = [0] * num_info_sets
+    for info_set, actions in info_set_actions.items():
+        idx = info_set_to_idx[info_set]
+        info_set_num_actions_list[idx] = len(actions)
+    info_set_num_actions = torch.tensor(info_set_num_actions_list, dtype=torch.float32, device=device)
+
     # Build depth slices
     max_depth = max(depth_buckets.keys()) + 1 if depth_buckets else 0
     depth_slices = []
@@ -184,7 +193,8 @@ def compile_game(
         info_set_to_idx=info_set_to_idx,
         idx_to_info_set={v: k for k, v in info_set_to_idx.items()},
         info_set_actions=info_set_actions,
-        num_info_sets=len(info_set_to_idx),
+        info_set_num_actions=info_set_num_actions,
+        num_info_sets=num_info_sets,
         num_nodes=num_nodes,
         max_actions=max_actions,
         num_players=num_players,

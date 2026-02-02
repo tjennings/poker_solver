@@ -186,10 +186,11 @@ def _unpaired_vs_unpaired_equity(
 
     # One hand dominates the other (one card matches)
     if h1_high == h2_low:
-        # h1 has the higher high card
-        return 0.65
-    if h2_high == h1_low:
+        # h2 has higher high card (h2_high > h1_high since h2_low == h1_high)
         return 0.35
+    if h2_high == h1_low:
+        # h1 has higher high card
+        return 0.65
 
     # No shared cards - compare high cards
     if h1_high > h2_high:
