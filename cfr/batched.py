@@ -59,7 +59,11 @@ class BatchedCFR:
         )
 
         # Process non-terminal nodes in topological order
-        for node_idx in range(self.compiled.num_nodes):
+        node_iter = range(self.compiled.num_nodes)
+        if self.verbose:
+            node_iter = tqdm(node_iter, desc="Forward pass", unit="node", leave=False)
+
+        for node_idx in node_iter:
             if self.compiled.terminal_mask[node_idx]:
                 continue
 
@@ -99,7 +103,11 @@ class BatchedCFR:
             utils[:, idx, :] = self.compiled.terminal_utils[idx]
 
         # Process in reverse order (children before parents)
-        for node_idx in reversed(range(self.compiled.num_nodes)):
+        node_iter = reversed(range(self.compiled.num_nodes))
+        if self.verbose:
+            node_iter = tqdm(list(node_iter), desc="Backward pass", unit="node", leave=False)
+
+        for node_idx in node_iter:
             if self.compiled.terminal_mask[node_idx]:
                 continue
 
