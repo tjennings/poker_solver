@@ -1,6 +1,7 @@
 from typing import Dict
 import torch
 from torch import Tensor
+from tqdm import tqdm
 
 from core.tensors import CompiledGame
 
@@ -12,10 +13,11 @@ class BatchedCFR:
     Runs batch_size independent CFR iterations simultaneously.
     """
 
-    def __init__(self, compiled: CompiledGame, batch_size: int = 1024):
+    def __init__(self, compiled: CompiledGame, batch_size: int = 1024, verbose: bool = False):
         self.compiled = compiled
         self.batch_size = batch_size
         self.device = compiled.device
+        self.verbose = verbose
 
         # Regrets and strategy sums: [num_info_sets, max_actions]
         self.regret_sum = torch.zeros(
@@ -121,7 +123,11 @@ class BatchedCFR:
         utils = self.backward_utils(reach, strategy)
 
         # Update regrets for non-terminal nodes
-        for node_idx in range(self.compiled.num_nodes):
+        node_iter = range(self.compiled.num_nodes)
+        if self.verbose:
+            node_iter = tqdm(node_iter, desc="Updating regrets", unit="node", leave=False)
+
+        for node_idx in node_iter:
             if self.compiled.terminal_mask[node_idx]:
                 continue
 

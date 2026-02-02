@@ -172,7 +172,6 @@ def run_hunl(args):
         if args.save:
             solver.save_strategy(args.save)
             if not args.quiet:
-                import os
                 size_mb = os.path.getsize(args.save) / (1024 * 1024)
                 print(f"Strategy saved to: {args.save} ({size_mb:.1f} MB)")
                 print()

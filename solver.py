@@ -49,7 +49,7 @@ class Solver:
             # Use batched GPU implementation
             self.device = get_device(device)
             self.compiled = compile_game(game, self.device, verbose=verbose)
-            self.engine = BatchedCFR(self.compiled, batch_size)
+            self.engine = BatchedCFR(self.compiled, batch_size, verbose=verbose)
             self.batched = True
 
     def solve(
