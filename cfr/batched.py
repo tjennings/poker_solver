@@ -14,11 +14,19 @@ class BatchedCFR:
     All node processing is done with tensor operations - no Python loops over nodes.
     """
 
-    def __init__(self, compiled: CompiledGame, batch_size: int = 1024, verbose: bool = False):
+    def __init__(
+        self,
+        compiled: CompiledGame,
+        batch_size: int = 1024,
+        verbose: bool = False,
+        max_memory_gb: float = 4.0,
+    ):
         self.compiled = compiled
-        self.batch_size = batch_size
         self.device = compiled.device
         self.verbose = verbose
+
+        # Calculate memory-safe batch size
+        self.batch_size = self._compute_safe_batch_size(batch_size, max_memory_gb)
 
         # Regrets and strategy sums: [num_info_sets, max_actions]
         self.regret_sum = torch.zeros(
@@ -31,6 +39,28 @@ class BatchedCFR:
 
         # Pre-compute indices for vectorized operations
         self._precompute_indices()
+
+    def _compute_safe_batch_size(self, requested_batch_size: int, max_memory_gb: float) -> int:
+        """Compute a batch size that fits within memory limit."""
+        num_nodes = self.compiled.num_nodes
+        num_players = self.compiled.num_players
+
+        # Memory per batch element (bytes):
+        # - reach tensor: num_nodes * num_players * 4 (float32)
+        # - utils tensor: num_nodes * num_players * 4 (float32)
+        # - intermediate tensors: ~2x overhead
+        bytes_per_batch = num_nodes * num_players * 4 * 2 * 2  # 2 tensors, 2x overhead
+
+        max_memory_bytes = max_memory_gb * 1024 ** 3
+        max_batch_size = max(1, int(max_memory_bytes / bytes_per_batch))
+
+        if requested_batch_size > max_batch_size:
+            if self.verbose:
+                print(f"Reducing batch size from {requested_batch_size} to {max_batch_size} "
+                      f"to fit in {max_memory_gb}GB memory limit")
+            return max_batch_size
+
+        return requested_batch_size
 
     def _precompute_indices(self):
         """Pre-compute all indices needed for vectorized tree traversal."""

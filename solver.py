@@ -28,6 +28,7 @@ class Solver:
         device: str = "auto",
         batch_size: int = 1,
         verbose: bool = False,
+        max_memory_gb: float = 4.0,
     ):
         """
         Initialize solver.
@@ -37,6 +38,7 @@ class Solver:
             device: "auto", "cpu", "cuda", or "mps"
             batch_size: Number of parallel iterations (1 = vanilla CFR)
             verbose: Show progress during game tree compilation
+            max_memory_gb: Maximum GPU memory to use (will reduce batch_size if needed)
         """
         self.game = game
         self.batch_size = batch_size
@@ -49,8 +51,14 @@ class Solver:
             # Use batched GPU implementation
             self.device = get_device(device)
             self.compiled = compile_game(game, self.device, verbose=verbose)
-            self.engine = BatchedCFR(self.compiled, batch_size, verbose=verbose)
+            self.engine = BatchedCFR(
+                self.compiled,
+                batch_size,
+                verbose=verbose,
+                max_memory_gb=max_memory_gb,
+            )
             self.batched = True
+            self.batch_size = self.engine.batch_size  # May have been reduced
 
     def solve(
         self,

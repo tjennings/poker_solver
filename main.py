@@ -147,6 +147,7 @@ def run_hunl(args):
             device=args.device,
             batch_size=args.batch_size,
             verbose=not args.quiet,
+            max_memory_gb=args.max_memory,
         )
 
         # Train
@@ -312,6 +313,12 @@ def add_hunl_args(parser):
         type=int,
         default=1024,
         help="Batch size for parallel iterations (default: 1024)"
+    )
+    parser.add_argument(
+        "--max-memory", "-m",
+        type=float,
+        default=4.0,
+        help="Maximum GPU memory in GB (default: 4.0, will reduce batch size if needed)"
     )
     parser.add_argument(
         "--quiet", "-q",
