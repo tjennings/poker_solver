@@ -1,6 +1,7 @@
 from typing import Dict, List, Tuple
 import torch
 from torch import Tensor
+from tqdm import tqdm
 
 from core.tensors import CompiledGame
 
@@ -166,7 +167,11 @@ class BatchedCFR:
         )
 
         # Process level by level (edges at same depth are independent)
-        for parents, children, actions, info_sets, players in self.depth_edges:
+        edge_iter = self.depth_edges
+        if self.verbose:
+            edge_iter = tqdm(edge_iter, desc="Forward pass", unit="depth", leave=False)
+
+        for parents, children, actions, info_sets, players in edge_iter:
             # Get action probabilities for all edges at this level
             probs = strategy[info_sets, actions]  # [num_edges]
 
@@ -208,7 +213,11 @@ class BatchedCFR:
         utils[:, self.terminal_indices, :] = self.compiled.terminal_utils[self.terminal_indices]
 
         # Process levels in reverse order (children before parents)
-        for parents, children, actions, info_sets, players in reversed(self.depth_edges):
+        edge_iter = list(reversed(self.depth_edges))
+        if self.verbose:
+            edge_iter = tqdm(edge_iter, desc="Backward pass", unit="depth", leave=False)
+
+        for parents, children, actions, info_sets, players in edge_iter:
             # Get action probabilities for all edges
             probs = strategy[info_sets, actions]  # [num_edges]
 
