@@ -400,7 +400,12 @@ def render_matrix(
 
 
 def render_header(
-    stack: float, pot: float, action_history: List[str], player: str
+    stack: float,
+    pot: float,
+    action_history: List[str],
+    player: str,
+    street: str = "preflop",
+    board: Tuple[str, ...] = (),
 ) -> str:
     """
     Render the header showing game state information.
@@ -410,6 +415,8 @@ def render_header(
         pot: Current pot size in big blinds
         action_history: List of action strings (e.g., ["SBr2.5", "BBr8"])
         player: Player to act ("SB" or "BB")
+        street: Current street ("preflop", "flop", "turn", "river")
+        board: Board cards as tuple of strings
 
     Returns:
         Formatted header string
@@ -422,11 +429,17 @@ def render_header(
     else:
         stack_str = f"{stack}BB"
 
-    # First line: game info
-    line1 = f"HUNL Preflop | Stack: {stack_str} | Pot: {pot}BB"
+    # First line: game info with street
+    street_display = street.capitalize()
+    line1 = f"HUNL {street_display} | Stack: {stack_str} | Pot: {pot}BB"
     lines.append(line1)
 
-    # Second line: action history and player to act
+    # Board line (if post-flop)
+    if board:
+        board_str = " ".join(board)
+        lines.append(f"Board: {board_str}")
+
+    # Action history and player to act
     if action_history:
         action_str = " ".join(action_history)
         line2 = f"Action: {action_str} | {player} to act"

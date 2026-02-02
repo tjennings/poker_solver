@@ -221,14 +221,15 @@ class TestInteractiveSessionApplyAction:
         assert session.history == ["r2.5"]
 
     def test_apply_multiple_actions(self, config, empty_strategy):
-        """Multiple actions should all be recorded."""
+        """Multiple actions should all be recorded including street markers."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
         session.apply_action("r2.5")
         session.apply_action("r8")
         session.apply_action("c")
-        assert session.history == ["r2.5", "r8", "c"]
+        # History includes street marker after preflop call
+        assert session.history == ["r2.5", "r8", "c", "/flop"]
 
     def test_apply_fold_action(self, config, empty_strategy):
         """Fold action should be added to history."""
@@ -310,7 +311,7 @@ class TestInteractiveSessionGetCurrentPlayer:
         assert session.get_current_player() == "BB"
 
     def test_current_player_alternates(self, config, empty_strategy):
-        """Players alternate after each action."""
+        """Players alternate after each action, resetting on new street."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
@@ -323,7 +324,9 @@ class TestInteractiveSessionGetCurrentPlayer:
         assert session.get_current_player() == "SB"
 
         session.apply_action("c")
-        assert session.get_current_player() == "BB"
+        # After call, advances to flop - OOP (SB) acts first
+        assert session.get_current_player() == "SB"
+        assert session.street == "flop"
 
 
 class TestInteractiveSessionGetPot:
@@ -404,14 +407,16 @@ class TestInteractiveSessionIsTerminal:
         session.apply_action("f")
         assert session.is_terminal() is True
 
-    def test_terminal_after_call_of_raise(self, config, empty_strategy):
-        """Session is terminal after calling a raise."""
+    def test_advances_to_flop_after_call_of_raise(self, config, empty_strategy):
+        """Session advances to flop after calling a raise (post-flop mode)."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
         session.apply_action("r2.5")
         session.apply_action("c")
-        assert session.is_terminal() is True
+        # Now on flop, not terminal
+        assert session.is_terminal() is False
+        assert session.street == "flop"
 
     def test_not_terminal_after_limp(self, config, empty_strategy):
         """Session is not terminal after SB limps."""
@@ -421,14 +426,16 @@ class TestInteractiveSessionIsTerminal:
         session.apply_action("c")  # SB limps
         assert session.is_terminal() is False
 
-    def test_terminal_after_check_after_limp(self, config, empty_strategy):
-        """Session is terminal after BB checks over limp."""
+    def test_advances_to_flop_after_check_after_limp(self, config, empty_strategy):
+        """Session advances to flop after BB checks over limp."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
         session.apply_action("c")  # SB limps
         session.apply_action("c")  # BB checks
-        assert session.is_terminal() is True
+        # Now on flop, not terminal
+        assert session.is_terminal() is False
+        assert session.street == "flop"
 
 
 class TestInteractiveSessionGetStrategyForHand:
@@ -536,14 +543,16 @@ class TestAllInScenarios:
         # Both players have 100 in, pot = 200
         assert session.get_pot() == 200.0
 
-    def test_terminal_after_sb_all_in_bb_call(self, config, empty_strategy):
-        """Game should be terminal after BB calls SB all-in."""
+    def test_advances_to_flop_after_sb_all_in_bb_call(self, config, empty_strategy):
+        """Game advances to flop after BB calls SB all-in (post-flop mode)."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
         session.apply_action("a")
         session.apply_action("c")
-        assert session.is_terminal() is True
+        # All-in preflop advances to flop (showdown on river)
+        assert session.street == "flop"
+        assert session.is_terminal() is False
 
     def test_terminal_after_sb_all_in_bb_fold(self, config, empty_strategy):
         """Game should be terminal after BB folds to SB all-in."""
@@ -585,15 +594,16 @@ class TestAllInScenarios:
         session.apply_action("a")
         assert session.is_terminal() is False
 
-    def test_terminal_after_raise_all_in_call(self, config, empty_strategy):
-        """Game should be terminal after SB calls BB's all-in."""
+    def test_advances_to_flop_after_raise_all_in_call(self, config, empty_strategy):
+        """Game advances to flop after SB calls BB's all-in."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
         session.apply_action("r8")
         session.apply_action("a")
         session.apply_action("c")
-        assert session.is_terminal() is True
+        assert session.street == "flop"
+        assert session.is_terminal() is False
 
     def test_pot_after_raise_all_in_call(self, config, empty_strategy):
         """Pot should be 200 (both all-in) after raise, all-in, call."""
@@ -644,14 +654,15 @@ class TestLimpCheckScenarios:
         session.apply_action("c")  # BB checks
         assert session.get_pot() == 2.0
 
-    def test_terminal_after_limp_check(self, config, empty_strategy):
-        """Game should be terminal after limp-check."""
+    def test_advances_to_flop_after_limp_check(self, config, empty_strategy):
+        """Game advances to flop after limp-check."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
         session.apply_action("c")
         session.apply_action("c")
-        assert session.is_terminal() is True
+        assert session.street == "flop"
+        assert session.is_terminal() is False
 
     def test_pot_after_limp_raise(self, config, empty_strategy):
         """Pot should reflect BB raise after SB limp."""
@@ -671,15 +682,16 @@ class TestLimpCheckScenarios:
         session.apply_action("r8")
         assert session.is_terminal() is False
 
-    def test_terminal_after_limp_raise_call(self, config, empty_strategy):
-        """Game should be terminal after limp, raise, call."""
+    def test_advances_to_flop_after_limp_raise_call(self, config, empty_strategy):
+        """Game advances to flop after limp, raise, call."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
         session.apply_action("c")  # SB limps
         session.apply_action("r8")  # BB raises
         session.apply_action("c")  # SB calls
-        assert session.is_terminal() is True
+        assert session.street == "flop"
+        assert session.is_terminal() is False
 
     def test_pot_after_limp_raise_call(self, config, empty_strategy):
         """Pot should be 16 after limp, raise to 8, call."""
@@ -722,15 +734,16 @@ class TestComplexRaiseSequences:
         session.apply_action("r8")
         assert session.get_current_player() == "SB"
 
-    def test_terminal_after_raise_reraise_call(self, config, empty_strategy):
-        """Game should be terminal after raise-reraise-call."""
+    def test_advances_to_flop_after_raise_reraise_call(self, config, empty_strategy):
+        """Game advances to flop after raise-reraise-call."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
         session.apply_action("r3")
         session.apply_action("r8")
         session.apply_action("c")
-        assert session.is_terminal() is True
+        assert session.street == "flop"
+        assert session.is_terminal() is False
 
     def test_pot_after_raise_reraise_call(self, config, empty_strategy):
         """Pot should be correct after raise-reraise-call."""
@@ -752,8 +765,8 @@ class TestComplexRaiseSequences:
         session.apply_action("r20")  # SB raises to 20, pot = 11 + 17 = 28
         assert session.get_pot() == 28.0
 
-    def test_terminal_after_raise_reraise_reraise_call(self, config, empty_strategy):
-        """Game should be terminal after raise-reraise-reraise-call."""
+    def test_advances_to_flop_after_raise_reraise_reraise_call(self, config, empty_strategy):
+        """Game advances to flop after raise-reraise-reraise-call."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
@@ -761,7 +774,8 @@ class TestComplexRaiseSequences:
         session.apply_action("r8")
         session.apply_action("r20")
         session.apply_action("c")
-        assert session.is_terminal() is True
+        assert session.street == "flop"
+        assert session.is_terminal() is False
 
     def test_pot_after_raise_reraise_reraise_call(self, config, empty_strategy):
         """Pot should be correct after raise-reraise-reraise-call."""
@@ -994,15 +1008,18 @@ class TestTerminalStateValidation:
         assert session.get_pot() == initial_pot
         assert session.get_pot() != pot_after_raise
 
-    def test_go_back_restores_terminal_state(self, config, empty_strategy):
-        """Going back from terminal should make non-terminal."""
+    def test_go_back_restores_street(self, config, empty_strategy):
+        """Going back from flop should restore to preflop."""
         from cli.interactive import InteractiveSession
 
         session = InteractiveSession(config, empty_strategy)
         session.apply_action("r3")
         session.apply_action("c")
-        assert session.is_terminal() is True
+        # Now on flop
+        assert session.street == "flop"
         session.go_back()
+        # Back to preflop after r3
+        assert session.street == "preflop"
         assert session.is_terminal() is False
 
 
@@ -1113,7 +1130,8 @@ class TestMultiStackSession:
         session = InteractiveSession(multi_stack_config, multi_stack_strategy)
         session.apply_action("r3")
         session.apply_action("c")
-        assert len(session.history) == 2
+        # History includes street marker: ["r3", "c", "/flop"]
+        assert len(session.history) == 3
 
         session.switch_stack(50.0)
         assert session.history == []

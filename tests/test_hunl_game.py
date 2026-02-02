@@ -18,8 +18,8 @@ def config():
 
 @pytest.fixture
 def game(config):
-    """HUNL preflop game instance."""
-    return HUNLPreflop(config)
+    """HUNL preflop game instance (preflop-only mode for backward compat)."""
+    return HUNLPreflop(config, preflop_only=True)
 
 
 class TestHUNLState:
@@ -376,29 +376,29 @@ class TestHUNLPreflopInfoSetKey:
     """Tests for info_set_key method."""
 
     def test_info_set_key_sb_initial(self, game):
-        """SB initial info set should show position and hand."""
+        """SB initial info set should show position, hand, and board."""
         state = HUNLState(hands=(0, 1), history=(), stack=100, pot=1.5, to_act=0)
         key = game.info_set_key(state)
-        assert key == "SB:AA:"  # SB, AA (index 0), no history
+        assert key == "SB:AA::"  # SB, AA (index 0), no board, no history
 
     def test_info_set_key_bb_facing_raise(self, game):
         """BB facing raise should show action history."""
         state = HUNLState(hands=(0, 1), history=("r3",), stack=100, pot=4.0, to_act=1)
         key = game.info_set_key(state)
-        assert key == "BB:KK:r3"  # BB, KK (index 1), facing r3
+        assert key == "BB:KK::r3"  # BB, KK (index 1), no board, facing r3
 
     def test_info_set_key_different_hands(self, game):
         """Info set key should reflect hand correctly."""
         # Index 13 = AKs (first suited hand)
         state = HUNLState(hands=(13, 0), history=(), stack=100, pot=1.5, to_act=0)
         key = game.info_set_key(state)
-        assert key == "SB:AKs:"
+        assert key == "SB:AKs::"
 
     def test_info_set_key_with_history(self, game):
         """Info set should include full action history."""
         state = HUNLState(hands=(0, 1), history=("r3", "r10"), stack=100, pot=13.0, to_act=0)
         key = game.info_set_key(state)
-        assert key == "SB:AA:r3-r10"
+        assert key == "SB:AA::r3-r10"
 
     def test_info_set_key_hides_opponent_hand(self, game):
         """Info set key should not reveal opponent's hand."""
@@ -483,3 +483,111 @@ class TestHUNLPreflopGameFlow:
         state = game.next_state(state, "c")
         assert game.is_terminal(state)
         assert state.pot == 200.0
+
+
+class TestHUNLPostFlopGameFlow:
+    """Integration tests for post-flop game scenarios."""
+
+    @pytest.fixture
+    def postflop_game(self, config):
+        """HUNL game in full post-flop mode."""
+        return HUNLPreflop(config, preflop_only=False)
+
+    def test_preflop_call_advances_to_flop(self, postflop_game):
+        """After preflop call, game should advance to flop."""
+        state = HUNLState(hands=(0, 1), history=(), stack=100, pot=1.5, to_act=0)
+
+        # SB raises
+        state = postflop_game.next_state(state, "r3")
+        assert state.street == "preflop"
+
+        # BB calls - should advance to flop
+        state = postflop_game.next_state(state, "c")
+        assert state.street == "flop"
+        assert state.board == ("Ah", "Th", "6c")
+        assert state.to_act == 0  # OOP acts first on flop
+        assert not postflop_game.is_terminal(state)
+
+    def test_flop_check_check_advances_to_turn(self, postflop_game):
+        """After flop check-check, game should advance to turn."""
+        # Start from preflop and go to flop naturally
+        state = HUNLState(hands=(0, 1), history=(), stack=100, pot=1.5, to_act=0)
+
+        # Preflop: SB raises, BB calls -> advances to flop
+        state = postflop_game.next_state(state, "r3")
+        state = postflop_game.next_state(state, "c")
+        assert state.street == "flop"
+        assert state.to_act == 0  # OOP acts first
+
+        # SB checks
+        state = postflop_game.next_state(state, "c")
+        assert state.street == "flop"  # Still on flop after first check
+
+        # BB checks - should advance to turn
+        state = postflop_game.next_state(state, "c")
+        assert state.street == "turn"
+        assert state.board == ("Ah", "Th", "6c", "Jc")
+        assert not postflop_game.is_terminal(state)
+
+    def test_river_call_is_terminal(self, postflop_game):
+        """Call on river should be terminal."""
+        # Start on river
+        state = HUNLState(
+            hands=(0, 1),
+            history=("r3", "c", "c", "c", "c", "c"),
+            stack=100,
+            pot=6.0,
+            to_act=0,
+            street="river",
+            board=("Ah", "Th", "6c", "Jc", "8c"),
+            street_contributions=(0.0, 0.0),
+        )
+
+        # SB bets
+        state = postflop_game.next_state(state, "r8")
+        assert not postflop_game.is_terminal(state)
+
+        # BB calls - should be terminal
+        state = postflop_game.next_state(state, "c")
+        assert postflop_game.is_terminal(state)
+
+    def test_river_showdown_uses_hand_eval(self, postflop_game):
+        """River showdown should use hand evaluation, not preflop equity."""
+        # On river board: Ah Th 6c Jc 8c
+        # AA has trips (blocks Ah)
+        # KK has just a pair
+        state = HUNLState(
+            hands=(0, 1),  # AA vs KK
+            history=("r3", "c", "c", "c", "c", "c", "c", "c"),
+            stack=100,
+            pot=6.0,
+            to_act=0,
+            street="river",
+            board=("Ah", "Th", "6c", "Jc", "8c"),
+            street_contributions=(0.0, 0.0),
+        )
+
+        # AA should win with trip aces
+        sb_util = postflop_game.utility(state, 0)
+        bb_util = postflop_game.utility(state, 1)
+
+        # AA wins the full pot (trips beats pair)
+        assert sb_util > 0  # SB (AA) wins
+        assert bb_util < 0  # BB (KK) loses
+        assert abs(sb_util + bb_util) < 0.01  # Zero-sum
+
+    def test_info_set_key_includes_board(self, postflop_game):
+        """Info set key should include board cards."""
+        state = HUNLState(
+            hands=(0, 1),
+            history=("r3", "c"),
+            stack=100,
+            pot=6.0,
+            to_act=0,
+            street="flop",
+            board=("Ah", "Th", "6c"),
+            street_contributions=(0.0, 0.0),
+        )
+        key = postflop_game.info_set_key(state)
+        assert "AhTh6c" in key
+        assert key.startswith("SB:AA:")
