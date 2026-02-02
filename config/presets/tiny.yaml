@@ -1,0 +1,3 @@
+name: "Tiny Test"
+stack_depth: 10
+raise_sizes: [2.5, 5, 10]
