@@ -76,6 +76,10 @@ class BatchedCFR:
         # BFS to compute depths
         current_depth = 0
         max_depth = 0
+
+        if self.verbose:
+            print("Computing node depths...", end=" ", flush=True)
+
         while True:
             nodes_at_depth = torch.where(depth == current_depth)[0]
             if len(nodes_at_depth) == 0:
@@ -93,6 +97,9 @@ class BatchedCFR:
 
             current_depth += 1
 
+        if self.verbose:
+            print(f"done (max depth: {max_depth})")
+
         self.node_depth = depth
         self.max_depth = max_depth
 
@@ -100,7 +107,11 @@ class BatchedCFR:
         # Each edge: (parent_node, child_node, action, info_set, player)
         self.depth_edges: List[Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]] = []
 
-        for d in range(max_depth + 1):
+        depth_iter = range(max_depth + 1)
+        if self.verbose:
+            depth_iter = tqdm(depth_iter, desc="Building edges", unit="depth")
+
+        for d in depth_iter:
             parents = []
             children = []
             actions = []
