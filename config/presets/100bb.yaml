@@ -1,0 +1,3 @@
+name: "100bb"
+stack_depths: [100]
+raise_sizes: [2, 3, 7, 15]
