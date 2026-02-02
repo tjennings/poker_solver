@@ -16,7 +16,10 @@ def small_config():
     )
 
 
+@pytest.mark.slow
 class TestHUNLSolver:
+    """These tests require full HUNL game tree compilation, which is slow."""
+
     def test_solver_with_hunl(self, small_config):
         """Solver should work with HUNL preflop game."""
         game = HUNLPreflop(small_config)

@@ -1,0 +1,3 @@
+name: "Aggressive 100BB"
+stack_depth: 100
+raise_sizes: [3, 4, 10, 12, 25, 30, 60, 100]

@@ -26,4 +26,7 @@ include = ["games*", "cfr*", "core*", "config*"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v"
+addopts = "-v -m 'not slow'"
+markers = [
+    "slow: marks tests as slow (run with pytest -m slow)",
+]
