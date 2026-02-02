@@ -67,7 +67,7 @@ def run_hunl(args):
     from config import load_config, get_preset_path
     from games.hunl_preflop import HUNLPreflop
     from cli.parser import parse_action_sequence
-    from cli.interactive import run_interactive, InteractiveSession
+    from cli.interactive import run_interactive
 
     # Load config (preset or file)
     config_path = args.config
@@ -155,13 +155,12 @@ def run_hunl(args):
 
     # Enter interactive mode unless disabled
     if not args.no_interactive:
-        # Create session with initial actions pre-applied
-        session = InteractiveSession(config, interactive_strategy)
-        for action in initial_actions:
-            session.apply_action(action)
-        run_interactive(config, interactive_strategy)
-    elif not args.quiet:
-        print("Training complete. Use --no-interactive to skip interactive mode.")
+        run_interactive(config, interactive_strategy, initial_actions=initial_actions)
+    else:
+        if not args.quiet:
+            print("Training complete. Use --no-interactive to skip interactive mode.")
+        else:
+            print(f"Training complete. Exploitability: {solver.exploitability():.6f}")
 
 
 def _build_interactive_strategy(raw_strategy, initial_actions):

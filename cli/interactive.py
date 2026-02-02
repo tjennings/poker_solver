@@ -371,14 +371,21 @@ class InteractiveSession:
         return matrix
 
 
-def run_interactive(config: Config, strategy: Dict) -> None:
+def run_interactive(
+    config: Config,
+    strategy: Dict,
+    initial_actions: tuple = ()
+) -> None:
     """Run the interactive exploration loop.
 
     Args:
         config: Game configuration
         strategy: Strategy dictionary
+        initial_actions: Optional tuple of actions to pre-apply to the session
     """
     session = InteractiveSession(config, strategy)
+    for action in initial_actions:
+        session.apply_action(action)
 
     while True:
         # Clear screen and show current state
