@@ -198,9 +198,6 @@ class BatchedCFR:
 
         # Process level by level (edges at same depth are independent)
         edge_iter = self.depth_edges
-        if self.verbose:
-            edge_iter = tqdm(edge_iter, desc="Forward pass", unit="depth", leave=False)
-
         for parents, children, actions, info_sets, players in edge_iter:
             # Get action probabilities for all edges at this level
             probs = strategy[info_sets, actions]  # [num_edges]
